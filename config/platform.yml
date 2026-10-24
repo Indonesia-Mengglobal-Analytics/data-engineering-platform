@@ -1,0 +1,47 @@
+# Indonesia Mengglobal data platform: what gets ingested, and what may be published.
+#
+# The site is served by GitHub Pages from a public repository, so everything in
+# site/ is readable by anyone with the URL. Only aggregates leave the pipeline;
+# row-level data stays inside the GitHub Actions run and is never written to the repo.
+
+github:
+  repository: Indonesia-Mengglobal-Analytics/data-engineering-platform
+  workflow_file: pipeline.yml
+
+sources:
+  # Every Google Sheet in this Drive folder is discovered on each run. Share the
+  # folder with the service account (GOOGLE_SERVICE_ACCOUNT_JSON) as Viewer.
+  drive_folder_ids: []
+  # Sheets registered by ID, in addition to the folder.
+  spreadsheet_ids:
+    - 1LpvKvoXsVdYsUqtYHXK1GEubUw9uykE1RTIs2bHJaLI  # Mentee_Data_PhD_Mentorship_2026
+    - 1hUpoba7UJ0qQgX10GWsYlNewfVILi44YgULhLHSM-wc
+    - 1a2FvVl2QpeCat886BT4h5dKVjNk6UVNp0IvZveWsLPs
+
+# The format a sheet must follow to be registered (see README "Source format").
+contract:
+  data_tab: DATA
+  column_metadata_tab: COLUMN_METADATA
+  table_metadata_tab: TABLE_METADATA
+  column_metadata_headers: [no, column_name, column_description, column_header_location, form_question]
+  table_metadata_headers: [table_name, table_description, owner_email, operation_date_start, operation_date_end, populated_date, purpose, version]
+
+governance:
+  # Categories with fewer respondents than this are folded into "Other (<k)".
+  min_group_size: 5
+  # Max categories shown per chart; the rest are folded into "Other".
+  max_categories: 12
+  # Column classification, first matching rule wins (regex on column_name).
+  # personal:  identifies a person; never published, not even as counts.
+  # sensitive: special-category data (health, disability, relationships); never published.
+  # free_text: open answers; only completeness is published.
+  # categorical: published as suppressed counts.
+  # metadata:  timestamps and consent flags; published as counts.
+  rules:
+    - {match: "email|full_name|phone|whatsapp|date_of_birth|signature|^name$", class: personal}
+    - {match: "special_assistance|accommodation|disability|management_team_connection|health|religion|ethnic", class: sensitive}
+    - {match: "research_profile|video", class: personal}
+    - {match: "^timestamp$", class: metadata}
+    - {match: "consent|declaration|commitment", class: metadata}
+    - {match: "url|detail|motivation|proposal|preparations|hopes|institution$|institution_\\d|language_proficiency|specialization|city_regency|graduation_date", class: free_text}
+    - {match: ".*", class: categorical}
