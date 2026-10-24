@@ -36,6 +36,15 @@ governance:
     - which_regions_are_you_interested_in_studying_in
     - preferred_country_of_study
     - referral_source
+  # Dashboard filters: single-answer categorical columns only. Values held by fewer than
+  # min_group_size people are grouped as "Other" before they leave the pipeline.
+  dashboard_filters:
+    - your_current_residency_province
+    - current_occupation_job_sector
+    - phd_area_of_study
+    - funding_plan_name_of_scholarship
+    - when_do_you_plan_to_start_your_phd
+    - prior_research_experience
   # Column classification, first matching rule wins (regex on column_name).
   # personal:  identifies a person; never published, not even as counts.
   # sensitive: special-category data (health, disability, relationships); never published.

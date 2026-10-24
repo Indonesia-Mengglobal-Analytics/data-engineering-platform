@@ -28,7 +28,12 @@ The repository and its Pages site are public, so:
 1. **Rows never leave the Actions run.** The DuckDB file is deleted at the end of the job. Only aggregates are published.
 2. **Personal and sensitive columns are dropped** before anything is counted (`config/platform.yml` → `governance.rules`).
    Category groups smaller than `min_group_size` (5) are folded together, and hidden when the fold is itself under 5.
-3. **Published files are encrypted** with AES-256-GCM, using a key derived from the 12-digit site PIN (PBKDF2-SHA256, 600,000 iterations).
+3. **Dashboard filters use grouped counts, not rows.** For the columns in `governance.dashboard_filters`, the pipeline
+   publishes counts per combination of filter values (and per submission day). Filter values and chart answers held by
+   fewer than 5 people are grouped as "Other" first. The browser applies the under-5 rule again to every number, and
+   hides the charts when a filter leaves fewer than 5 people. A PIN holder who decrypts the files can still see small
+   combinations of these coarse fields, so keep the filter list short and free of personal or sensitive columns.
+4. **Published files are encrypted** with AES-256-GCM, using a key derived from the 12-digit site PIN (PBKDF2-SHA256, 600,000 iterations).
    The browser decrypts them after login; without the PIN the JSON on Pages is unreadable. The PIN is never in the repo.
 
 Use a random PIN, not a pattern. Changing `SITE_PIN` resets the run history shown on the site (old files can't be opened with the new PIN).

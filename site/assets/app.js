@@ -110,6 +110,7 @@
     schema: '<path d="M2 4.5h5l1 1.5h6V13H2z" fill="none" stroke="currentColor" stroke-width="1.2"/>',
     sheet: '<rect x="3" y="2" width="10" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3 6h10M3 9.5h10M7 6v8" stroke="currentColor" stroke-width="1.2"/>',
     play: '<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>',
+    filter: '<path d="M2 3.5h12l-4.5 5.2V13l-3-1.5V8.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
     ext: '<path d="M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5" fill="none" stroke="currentColor" stroke-width="1.3"/>',
   };
   const icon = (name, size = 14) => `<svg viewBox="0 0 16 16" width="${size}" height="${size}" aria-hidden="true">${ICONS[name] || ""}</svg>`;
@@ -189,7 +190,7 @@
   // ---------- router ----------
   function route() {
     if (!D) return;
-    const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+    const parts = location.hash.split("?")[0].replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
     const [page = "home", ...rest] = parts;
     const pages = { home, catalog, jobs, runs: runsPage, ingestion, dashboards, governance };
     const render = pages[page] || notFound;
@@ -212,6 +213,8 @@
     });
     const pick = $("#dash-pick");
     if (pick) pick.addEventListener("change", () => (location.hash = `#/dashboards/${encodeURIComponent(pick.value)}`));
+    const dash = $("#dash");
+    if (dash) mountDashboard(dash);
   }
 
   // ---------- pages ----------
@@ -420,6 +423,10 @@
     const charts = d.charts.filter((c) => c.class === "categorical");
     const meta = d.charts.filter((c) => c.class === "metadata");
     const src = sources().find((x) => x.id === id);
+    if (d.cube) {
+      return head(d.title, `Published ${esc(when(D.dashboard.generated_at))}`, pick, [["Dashboards", "#/dashboards"], [d.title, null]]) +
+        (src && src.partial_load ? partialNote() : "") + `<div id="dash" data-id="${esc(id)}"></div>`;
+    }
     return head(d.title, `Published ${esc(when(D.dashboard.generated_at))}`, pick, [["Dashboards", "#/dashboards"], [d.title, null]]) +
       (src && src.partial_load ? partialNote() : "") + `
       <div class="canvas">
@@ -432,6 +439,301 @@
         <div class="widget w6"><h3>Data quality</h3><div class="table-wrap"><table><tbody>${d.quality.map((x) => `<tr><td>${esc(x.check)}</td><td class="num">${esc(x.value)}</td><td>${badge(x.status, { ok: "Pass", warn: "Warning", fail: "Fail" }[x.status])}</td></tr>`).join("") || `<tr><td class="muted">No checks.</td></tr>`}</tbody></table></div></div>
       </div>`;
   }
+
+
+  // ---------- filtered dashboard ----------
+  // Works on the grouped counts in d.cube: base = [dims..., day, count], charts = [dims..., day, value, count].
+  // Every number shown goes through the same small-group rule as the pipeline.
+  const FS = { id: null, sel: new Map(), from: null, to: null, open: null, q: "" };
+
+  function readFilters(cube) {
+    FS.sel = new Map(); FS.from = null; FS.to = null;
+    const query = new URLSearchParams(location.hash.split("?")[1] || "");
+    for (const part of (query.get("f") || "").split(";").filter(Boolean)) {
+      const [col, vals] = part.split(":");
+      const di = cube.dims.findIndex((d) => d.column === col);
+      if (di < 0) continue;
+      const idx = vals.split(",").map((v) => cube.dims[di].values.indexOf(decodeURIComponent(v))).filter((i) => i >= 0);
+      if (idx.length) FS.sel.set(di, new Set(idx));
+    }
+    const from = cube.days.indexOf(query.get("from")), to = cube.days.indexOf(query.get("to"));
+    FS.from = from >= 0 ? from : null;
+    FS.to = to >= 0 ? to : null;
+  }
+
+  function writeFilters(cube) {
+    const f = [...FS.sel].map(([di, set]) => `${cube.dims[di].column}:${[...set].map((i) => encodeURIComponent(cube.dims[di].values[i])).join(",")}`).join(";");
+    const q = new URLSearchParams();
+    if (f) q.set("f", f);
+    if (FS.from != null) q.set("from", cube.days[FS.from]);
+    if (FS.to != null) q.set("to", cube.days[FS.to]);
+    const base = location.hash.split("?")[0];
+    const next = q.toString() ? `${base}?${q}` : base;
+    try { history.replaceState(null, "", next); } catch { /* sandboxed: filters still work, just not in the URL */ }
+  }
+
+  const dated = () => FS.from != null || FS.to != null;
+  const active = () => FS.sel.size > 0 || dated();
+  function keep(row, nd, skip) {
+    for (const [di, set] of FS.sel) if (di !== skip && !set.has(row[di])) return false;
+    if (dated()) {
+      const day = row[nd];
+      if (day < 0 || (FS.from != null && day < FS.from) || (FS.to != null && day > FS.to)) return false;
+    }
+    return true;
+  }
+
+  function suppressJS(counts, k, max) {
+    const shown = []; let other = 0;
+    counts.sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(b[0]));
+    for (const [value, n] of counts) {
+      if (n >= k && shown.length < max) shown.push({ value, count: n });
+      else other += n;
+    }
+    if (other >= k) shown.push({ value: `Other (groups < ${k})`, count: other, folded: true });
+    else if (other) shown.push({ value: "Suppressed", count: null, folded: true });
+    return shown;
+  }
+
+  function mountDashboard(el) {
+    const id = el.dataset.id;
+    const d = D.dashboard.sources[id];
+    const cube = d.cube;
+    if (FS.id !== id) { FS.id = id; FS.open = null; }
+    readFilters(cube);
+    el.innerHTML = `<div class="filterbar" id="fbar"></div><div id="dash-body"></div>`;
+    const draw = () => { drawFilterBar(d, cube); drawBody(d, cube); };
+    const commit = () => { writeFilters(cube); draw(); };
+
+    el.addEventListener("click", (e) => {
+      const t = e.target.closest("[data-act]");
+      if (!t) {
+        if (FS.open != null && !e.target.closest(".popover")) { FS.open = null; drawFilterBar(d, cube); }
+        return;
+      }
+      const act = t.dataset.act, di = Number(t.dataset.dim), vi = Number(t.dataset.val);
+      if (act === "open") { FS.open = FS.open === t.dataset.key ? null : t.dataset.key; FS.q = ""; drawFilterBar(d, cube); return; }
+      if (act === "toggle" || act === "bar") {
+        const set = FS.sel.get(di) || new Set();
+        set.has(vi) ? set.delete(vi) : set.add(vi);
+        set.size ? FS.sel.set(di, set) : FS.sel.delete(di);
+      }
+      if (act === "only") FS.sel.set(di, new Set([vi]));
+      if (act === "all") FS.sel.delete(di);
+      if (act === "chip") { di >= 0 ? FS.sel.delete(di) : (FS.from = FS.to = null); }
+      if (act === "reset") { FS.sel.clear(); FS.from = FS.to = null; FS.open = null; }
+      if (act === "preset") {
+        const n = cube.days.length, p = t.dataset.preset;
+        if (p === "all") FS.from = FS.to = null;
+        if (p === "last7") { FS.from = Math.max(0, n - 7); FS.to = n - 1; }
+        if (p === "last") { FS.from = FS.to = n - 1; }
+        if (p === "early") { FS.from = 0; FS.to = Math.max(0, Math.floor(n / 2) - 1); }
+      }
+      commit();
+    });
+    el.addEventListener("input", (e) => {
+      if (e.target.id === "pop-search") {
+        FS.q = e.target.value.toLowerCase();
+        $$(".opt", el).forEach((o) => (o.hidden = FS.q && !o.dataset.label.includes(FS.q)));
+      }
+    });
+    el.addEventListener("change", (e) => {
+      if (e.target.dataset.date) {
+        const i = cube.days.indexOf(e.target.value);
+        if (e.target.dataset.date === "from") FS.from = i >= 0 ? i : null;
+        else FS.to = i >= 0 ? i : null;
+        if (FS.from != null && FS.to != null && FS.from > FS.to) [FS.from, FS.to] = [FS.to, FS.from];
+        commit();
+      }
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && FS.open != null) { FS.open = null; drawFilterBar(d, cube); }
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches(".hrow.clickable")) { e.preventDefault(); e.target.click(); }
+    });
+    draw();
+  }
+
+  function facet(cube, di) {
+    const nd = cube.dims.length, counts = new Array(cube.dims[di].values.length).fill(0);
+    for (const r of cube.base) if (keep(r, nd, di)) counts[r[di]] += r[nd + 1];
+    return counts;
+  }
+  const shownCount = (n, k) => (n === 0 ? "0" : n < k ? `<${k}` : fmtInt(n));
+  const fmtDay = (iso) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+  function drawFilterBar(d, cube) {
+    const k = cube.min_group_size, nd = cube.dims.length;
+    const total = cube.base.reduce((a, r) => a + r[nd + 1], 0);
+    const n = cube.base.reduce((a, r) => a + (keep(r, nd) ? r[nd + 1] : 0), 0);
+    const pills = cube.dims.map((dim, di) => {
+      const set = FS.sel.get(di);
+      const value = !set ? "All" : set.size === 1 ? dim.values[[...set][0]] : `${set.size} selected`;
+      const key = `d${di}`;
+      return `<div class="pill-wrap"><button class="pill ${set ? "on" : ""}" data-act="open" data-key="${key}" aria-expanded="${FS.open === key}">
+          <span class="pill-k">${esc(shortLabel(dim.column))}</span><span class="pill-v">${esc(value)}</span>${caret}</button>
+        ${FS.open === key ? optionsPopover(cube, di, k) : ""}</div>`;
+    }).join("");
+    const dateValue = dated() ? `${fmtDay(cube.days[FS.from ?? 0])} – ${fmtDay(cube.days[FS.to ?? cube.days.length - 1])}` : "All dates";
+    const datePill = cube.days.length ? `<div class="pill-wrap"><button class="pill ${dated() ? "on" : ""}" data-act="open" data-key="date" aria-expanded="${FS.open === "date"}">
+        ${icon("runs", 12)}<span class="pill-k">Submitted</span><span class="pill-v">${esc(dateValue)}</span>${caret}</button>
+        ${FS.open === "date" ? datePopover(cube) : ""}</div>` : "";
+    const chips = [...FS.sel].map(([di, set]) => [...set].map((vi) => `<button class="chip" data-act="toggle" data-dim="${di}" data-val="${vi}" title="Remove">
+        <span class="muted">${esc(shortLabel(cube.dims[di].column))}:</span> ${esc(cube.dims[di].values[vi])} <span aria-hidden="true">×</span></button>`).join("")).join("")
+      + (dated() ? `<button class="chip" data-act="chip" data-dim="-1"><span class="muted">Submitted:</span> ${esc(dateValue)} <span aria-hidden="true">×</span></button>` : "");
+    $("#fbar").innerHTML = `
+      <div class="fb-row">
+        <span class="fb-title">${icon("filter", 14)} Filters</span>
+        ${datePill}${pills}
+        <span class="fb-spacer"></span>
+        <span class="fb-count"><b>${shownCount(n, k)}</b> of ${fmtInt(total)} applicants</span>
+        ${active() ? `<button class="btn btn-sm" data-act="reset">Reset</button>` : ""}
+      </div>
+      ${active() ? `<div class="fb-chips">${chips}</div>` : ""}`;
+    const search = $("#pop-search");
+    if (search) { search.value = FS.q; search.focus(); }
+  }
+
+  function optionsPopover(cube, di, k) {
+    const dim = cube.dims[di], counts = facet(cube, di), set = FS.sel.get(di);
+    const max = Math.max(1, ...counts);
+    const order = dim.values.map((v, i) => i).sort((a, b) => counts[b] - counts[a] || (dim.values[a] === "Other") - (dim.values[b] === "Other"));
+    return `<div class="popover" role="dialog" aria-label="${esc(label(dim.column))}">
+      <div class="pop-head"><b>${esc(label(dim.column))}</b><span class="pop-links"><button class="linkbtn" data-act="all" data-dim="${di}">All</button></span></div>
+      ${dim.values.length > 6 ? `<input class="pop-search" id="pop-search" placeholder="Search ${esc(shortLabel(dim.column).toLowerCase())}…" autocomplete="off">` : ""}
+      <div class="pop-list">${order.map((vi) => {
+        const on = !!set && set.has(vi), c = counts[vi];
+        const hide = FS.q && !dim.values[vi].toLowerCase().includes(FS.q);
+        return `<div class="opt ${c === 0 ? "zero" : ""}" data-label="${esc(dim.values[vi].toLowerCase())}" ${hide ? "hidden" : ""}>
+          <label class="opt-main" data-act="toggle" data-dim="${di}" data-val="${vi}">
+            <span class="check ${on ? "on" : ""}" aria-hidden="true"></span>
+            <span class="opt-text"><span class="opt-label">${esc(dim.values[vi])}</span>
+              <span class="opt-bar"><span style="width:${(100 * c) / max}%"></span></span></span>
+            <span class="opt-n">${shownCount(c, k)}</span></label>
+          <button class="linkbtn only" data-act="only" data-dim="${di}" data-val="${vi}">Only</button></div>`;
+      }).join("")}</div>
+      <div class="pop-foot muted small">${dim.values.includes("Other") ? `"Other" groups answers given by fewer than ${k} people.` : "Counts update with your other filters."}</div>
+    </div>`;
+  }
+
+  function datePopover(cube) {
+    const days = cube.days, nd = cube.dims.length;
+    const perDay = new Array(days.length).fill(0);
+    for (const r of cube.base) {
+      if (r[nd] < 0) continue;
+      let ok = true;
+      for (const [di, set] of FS.sel) if (!set.has(r[di])) { ok = false; break; }
+      if (ok) perDay[r[nd]] += r[nd + 1];
+    }
+    const max = Math.max(1, ...perDay), from = FS.from ?? 0, to = FS.to ?? days.length - 1;
+    return `<div class="popover pop-date" role="dialog" aria-label="Submission date">
+      <div class="pop-head"><b>Submission date</b></div>
+      <div class="presets">
+        ${[["all", "All dates"], ["early", "First half"], ["last7", "Last 7 active days"], ["last", "Last day"]].map(([p, l]) => `<button class="seg" data-act="preset" data-preset="${p}">${l}</button>`).join("")}
+      </div>
+      <div class="spark">${perDay.map((c, i) => `<span class="${i >= from && i <= to ? "in" : ""}" style="height:${Math.max(2, (100 * c) / max)}%" title="${esc(fmtDay(days[i]))}"></span>`).join("")}</div>
+      <div class="date-row">
+        <label>From<input type="date" data-date="from" min="${days[0]}" max="${days[days.length - 1]}" value="${days[from]}"></label>
+        <label>To<input type="date" data-date="to" min="${days[0]}" max="${days[days.length - 1]}" value="${days[to]}"></label>
+      </div>
+      <div class="pop-foot muted small">Only days with submissions can be picked.</div>
+    </div>`;
+  }
+
+  function drawBody(d, cube) {
+    const k = cube.min_group_size, nd = cube.dims.length;
+    const n = cube.base.reduce((a, r) => a + (keep(r, nd) ? r[nd + 1] : 0), 0);
+    const total = cube.base.reduce((a, r) => a + r[nd + 1], 0);
+    const q = d.kpis;
+    const charts = d.charts.filter((c) => cube.charts[c.column]);
+    const computed = {};
+    for (const c of charts) {
+      const cc = cube.charts[c.column], sums = new Array(cc.values.length).fill(0);
+      for (const r of cc.rows) if (keep(r, nd)) sums[r[nd + 1]] += r[nd + 2];
+      computed[c.column] = { raw: sums, values: suppressJS(cc.values.map((v, i) => [v, sums[i]]).filter((x) => x[1] > 0), k, cube.max_categories) };
+    }
+    const top = (col) => { const v = computed[col]?.values.find((x) => !x.folded); return v ? v : null; };
+    const topArea = top("phd_area_of_study"), topFund = top("funding_plan_name_of_scholarship");
+    const counters = `
+      <div class="widget w2 counter"><h3>Applicants</h3><div class="value">${shownCount(n, k)}</div><div class="sub">${active() ? `${n >= k ? Math.round((100 * n) / total) + "% of " : "of "}${fmtInt(total)} in this sheet` : "rows in the DATA tab"}</div></div>
+      <div class="widget w2 counter"><h3>Top PhD area</h3><div class="value value-text">${esc(topArea ? topArea.value : "–")}</div><div class="sub">${topArea ? `${fmtInt(topArea.count)} applicants` : "not enough data"}</div></div>
+      <div class="widget w2 counter"><h3>Top funding plan</h3><div class="value value-text">${esc(topFund ? topFund.value : "–")}</div><div class="sub">${topFund ? `${fmtInt(topFund.count)} applicants` : "not enough data"}</div></div>`;
+    if (n < k) {
+      $("#dash-body").innerHTML = `<div class="canvas">${counters}<div class="widget w6 privacy-note">${icon("shield", 18)}
+        <div><b>Fewer than ${k} applicants match these filters.</b><br><span class="muted">Charts are hidden so no one can be singled out. Widen or reset the filters.</span></div>
+        <button class="btn" data-act="reset">Reset filters</button></div></div>${qualityBlock(d)}`;
+      return;
+    }
+    const filterable = new Map(cube.dims.map((dim, di) => [dim.column, di]));
+    const timeline = filteredTimeline(cube, k);
+    $("#dash-body").innerHTML = `<div class="canvas">${counters}
+      ${timeline}
+      ${charts.filter((c) => c.class === "categorical").map((c, i) => chartWidget(c, computed[c.column], filterable.get(c.column), cube, PALETTE[i % PALETTE.length], "")).join("")}
+      ${charts.filter((c) => c.class === "metadata").map((c) => chartWidget(c, computed[c.column], undefined, cube, "--c3", "w2")).join("")}
+      </div>${qualityBlock(d)}`;
+  }
+
+  function chartWidget(c, comp, di, cube, color, size) {
+    const set = di != null ? FS.sel.get(di) : null;
+    const max = Math.max(1, ...comp.values.map((v) => v.count || 0));
+    const k = cube.min_group_size;
+    const rows = comp.values.map((v) => {
+      const vi = di != null && !v.folded ? cube.dims[di].values.indexOf(v.value) : -1;
+      const click = vi >= 0 ? `data-act="bar" data-dim="${di}" data-val="${vi}" role="button" tabindex="0"` : "";
+      const state = set ? (vi >= 0 && set.has(vi) ? "sel" : "dim") : "";
+      return `<div class="hrow ${click ? "clickable" : ""} ${state}" ${click} title="${esc(v.value)}">
+        <span class="lbl">${esc(v.value)}</span>
+        <span class="track"><span class="fill ${v.folded ? "folded" : ""}" style="width:${v.count ? (100 * v.count) / max : 0}%;${v.folded ? "" : `background:var(${color})`}"></span></span>
+        <span class="n">${v.count == null ? `<${k}` : fmtInt(v.count)}</span></div>`;
+    }).join("");
+    const sub = c.multi ? "people can pick several" : di != null ? "click a bar to filter" : `${comp.values.length} answers shown`;
+    return `<div class="widget ${size}"><h3>${esc(label(c.column))}</h3><div class="sub">${sub}</div><div class="hbar2">${rows || `<p class="muted">No answers.</p>`}</div></div>`;
+  }
+
+  function filteredTimeline(cube, k) {
+    if (!cube.days.length) return "";
+    const nd = cube.dims.length, perDay = new Array(cube.days.length).fill(0);
+    for (const r of cube.base) if (r[nd] >= 0 && keep(r, nd)) perDay[r[nd]] += r[nd + 1];
+    if (!active()) {
+      return `<div class="widget w6"><h3>Submissions per day</h3><div class="sub">by form timestamp</div>${timelineChart(cube.days.map((date, i) => ({ date, count: perDay[i] })))}</div>`;
+    }
+    // Filtered: weekly totals, and weeks under k are drawn as a stub without a number.
+    const weeks = new Map();
+    cube.days.forEach((iso, i) => {
+      const dt = new Date(iso); const monday = new Date(dt); monday.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+      const key = monday.toISOString().slice(0, 10);
+      weeks.set(key, (weeks.get(key) || 0) + perDay[i]);
+    });
+    const pts = [...weeks].filter(([, c]) => c > 0);
+    const W = 960, H = 180, L = 36, B = 24, T = 8;
+    const max = Math.max(k, ...pts.map(([, c]) => c));
+    const step = (W - L) / Math.max(1, pts.length), bw = Math.max(4, step * 0.6);
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    return `<div class="widget w6"><h3>Submissions per week</h3><div class="sub">filtered · weeks with fewer than ${k} are shown as a grey stub</div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Submissions per week">
+      ${[0, Math.round(max / 2), max].map((t) => `<line class="grid-line" x1="${L}" x2="${W}" y1="${y(t)}" y2="${y(t)}"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${t}</text>`).join("")}
+      ${pts.map(([wk, c], i) => {
+        const x = L + i * step + (step - bw) / 2, small = c < k, h = small ? 6 : H - B - y(c);
+        return `<rect x="${x}" y="${H - B - h}" width="${bw}" height="${h}" rx="2" fill="${small ? "var(--c9)" : "var(--c1)"}"><title>Week of ${esc(fmtDay(wk))}: ${small ? `<${k}` : c}</title></rect>
+          <text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(fmtDay(wk))}</text>`;
+      }).join("")}</svg></div>`;
+  }
+
+  function qualityBlock(d) {
+    const q = d.kpis;
+    return `<h2 class="section-title">Data quality <span class="muted small">· all records, not filtered</span></h2>
+      <div class="canvas">
+        <div class="widget w2 counter"><h3>Duplicate submissions</h3><div class="value">${fmtInt(q.duplicate_submissions)}</div><div class="sub">${q.duplicate_submissions == null ? "not measured yet" : "same email submitted again"}</div></div>
+        <div class="widget w2 counter"><h3>Average completeness</h3><div class="value">${pct(q.avg_completeness)}</div><div class="sub">across ${q.columns_measured ?? q.columns} of ${q.columns} columns</div></div>
+        <div class="widget w2"><h3>Checks</h3><div class="table-wrap"><table><tbody>${d.quality.map((x) => `<tr><td>${esc(x.check)}</td><td class="num">${esc(x.value)}</td><td>${badge(x.status, { ok: "Pass", warn: "Warning", fail: "Fail" }[x.status])}</td></tr>`).join("") || `<tr><td class="muted">No checks.</td></tr>`}</tbody></table></div></div>
+      </div>`;
+  }
+
+  const SHORT = {
+    your_current_residency_province: "Province", current_occupation_job_sector: "Sector", phd_area_of_study: "PhD area",
+    funding_plan_name_of_scholarship: "Funding", when_do_you_plan_to_start_your_phd: "PhD start", prior_research_experience: "Research exp.",
+  };
+  const shortLabel = (column) => SHORT[column] || label(column);
+  const caret = `<svg class="caret" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`;
 
   const partialNote = () => `<div class="callout warn"><b>Initial load.</b> This data was loaded once through a Google connector, reading only the columns that feed the charts. Personal and free-text columns show "–" until the scheduled pipeline (service account) runs.</div>`;
   const label = (column) => cap(column.replace(/_/g, " ").replace(/\bphd\b/g, "PhD"));

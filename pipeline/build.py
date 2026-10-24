@@ -182,6 +182,7 @@ def dashboard_for(con, table: str, classes: dict[str, str], gov: dict, total: in
     multi = set(gov.get("multi_select", []))
     out: dict = {"kpis": {"records": total}, "charts": [], "timeline": [], "quality": []}
 
+    fmt = None
     if "timestamp" in classes and "timestamp" not in unread:
         fmt = timestamp_format(con, table)
         if fmt:
@@ -238,7 +239,83 @@ def dashboard_for(con, table: str, classes: dict[str, str], gov: dict, total: in
         out["kpis"]["avg_completeness"] = round(sum(measured) / len(measured), 4)
     out["kpis"]["columns"] = len(classes)
     out["kpis"]["columns_measured"] = len(measured)
+    cube = filter_cube(con, table, classes, gov, unread, fmt, [c["column"] for c in out["charts"]])
+    if cube:
+        out["cube"] = cube
     return out
+
+
+def filter_cube(con, table: str, classes: dict[str, str], gov: dict, unread: frozenset[str],
+                fmt: str | None, charted: list[str]) -> dict | None:
+    """Grouped counts that let the dashboard filter without publishing rows.
+
+    Only the configured filter columns are used as dimensions, each value held by fewer
+    than min_group_size people is generalised to "Other", and withheld or multi-select
+    columns are never dimensions. The browser applies the same small-group rule again to
+    every number it shows, and hides charts when a filter leaves fewer than that many people.
+    """
+    k = gov["min_group_size"]
+    multi = set(gov.get("multi_select", []))
+    dims = [c for c in gov.get("dashboard_filters", [])
+            if classes.get(c) in COUNTED and c not in unread and c not in multi]
+    if not dims:
+        return None
+
+    # Generalised dimension expressions: rare values become "Other", blanks "(blank)".
+    exprs, values = [], []
+    for column in dims:
+        rows = con.execute(
+            f"""SELECT coalesce(nullif(trim("{column}"), ''), '(blank)') AS v, count(*) FROM curated."{table}" GROUP BY 1"""
+        ).fetchall()
+        keep = sorted((v for v, n in rows if n >= k), key=lambda v: -dict(rows)[v])
+        has_other = any(n < k for _, n in rows)
+        values.append(keep + (["Other"] if has_other else []))
+        kept = ", ".join("'" + v.replace("'", "''") + "'" for v in keep) or "NULL"
+        exprs.append(f"""CASE WHEN coalesce(nullif(trim("{column}"), ''), '(blank)') IN ({kept})
+                        THEN coalesce(nullif(trim("{column}"), ''), '(blank)') ELSE 'Other' END""")
+    index = [{v: i for i, v in enumerate(vals)} for vals in values]
+    dim_sql = ", ".join(f"{e} AS d{i}" for i, e in enumerate(exprs))
+    group = ", ".join(f"d{i}" for i in range(len(dims)))
+
+    day = (f"""CAST(try_strptime(trim("timestamp"), '{fmt}') AS DATE)""" if fmt else "NULL")
+    base_rows = con.execute(
+        f"""SELECT {group}, day, count(*) FROM (
+              SELECT {dim_sql}, {day} AS day FROM raw."{table}") GROUP BY ALL ORDER BY ALL"""
+    ).fetchall()
+    days = sorted({str(r[-2]) for r in base_rows if r[-2] is not None})
+    day_index = {d: i for i, d in enumerate(days)}
+    base = [[index[i][r[i]] for i in range(len(dims))] + [day_index.get(str(r[-2]), -1), r[-1]] for r in base_rows]
+
+    charts = {}
+    for column in charted:
+        if column in multi:
+            value = f"""trim(unnest(string_split("{column}", ', ')))"""
+            where = f"""WHERE nullif(trim("{column}"), '') IS NOT NULL"""
+        else:
+            value = f"""coalesce(nullif(trim("{column}"), ''), '(blank)')"""
+            where = ""
+        rows = con.execute(
+            f"""SELECT {group}, day, v, count(*) FROM (
+                  SELECT {dim_sql}, {day} AS day, {value} AS v FROM raw."{table}" {where}) WHERE v <> '' GROUP BY ALL ORDER BY ALL"""
+        ).fetchall()
+        # Answers held by fewer than k people overall are grouped too, so no rare value leaves the pipeline.
+        totals: dict[str, int] = {}
+        for r in rows:
+            totals[r[-2]] = totals.get(r[-2], 0) + r[-1]
+        kept = {v for v, n in totals.items() if n >= k}
+        label = lambda v: v if v in kept else "Other"  # noqa: E731
+        labels = sorted(kept, key=lambda v: -totals[v]) + (["Other"] if len(kept) < len(totals) else [])
+        label_index = {v: i for i, v in enumerate(labels)}
+        merged: dict[tuple, int] = {}
+        for r in rows:
+            key = (tuple(index[i][r[i]] for i in range(len(dims)))
+                   + (day_index.get(str(r[-3]), -1), label_index[label(r[-2])]))
+            merged[key] = merged.get(key, 0) + r[-1]
+        charts[column] = {"values": labels, "rows": [list(key) + [n] for key, n in sorted(merged.items())]}
+    # Row layout: base = [dim indexes..., day index, count]; charts = [dim indexes..., day index, value index, count].
+    return {"min_group_size": k, "max_categories": gov["max_categories"],
+            "dims": [{"column": c, "values": v} for c, v in zip(dims, values)],
+            "days": days, "base": base, "charts": charts}
 
 
 def publish(con, checked, tables, classes, config, previous, only, run) -> dict:

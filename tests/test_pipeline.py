@@ -202,3 +202,35 @@ def test_day_first_timestamps_and_multi_select_and_partial_load(tmp_path):
     cols = {c["name"]: c["completeness"] for c in catalog["sources"][0]["columns"]}
     assert cols["email_address"] is None and cols["timestamp"] == 1.0
     assert catalog["sources"][0]["partial_load"] is True
+
+
+def test_filter_cube_totals_and_generalisation(tmp_path):
+    fixtures = tmp_path / "fx"
+    fixtures.mkdir()
+    sheet = copy.deepcopy(DEMO)
+    sheet["tabs"]["DATA"][1][6] = "Papua"  # one person: must not be a filter value
+    (fixtures / "sheet.json").write_text(json.dumps(sheet))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "pipeline" / "build.py"), "--fixtures", str(fixtures),
+         "--out", str(tmp_path), "--warehouse", str(tmp_path / "w.duckdb")],
+        env={**os.environ, "SITE_PIN": PIN}, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    dash = unseal(json.loads((tmp_path / "dashboard.json").read_text()), PIN)["sources"][DEMO["spreadsheet_id"]]
+    cube = dash["cube"]
+    dims = [d["column"] for d in cube["dims"]]
+    assert dims == [c for c in CONFIG["governance"]["dashboard_filters"]]
+    assert not {"email_address", "full_name", "referral_source"} & set(dims)
+    assert sum(r[-1] for r in cube["base"]) == dash["kpis"]["records"]
+    # Every published filter value other than "Other" covers at least min_group_size people.
+    k = cube["min_group_size"]
+    for i, dim in enumerate(cube["dims"]):
+        for j, value in enumerate(dim["values"]):
+            total = sum(r[-1] for r in cube["base"] if r[i] == j)
+            assert value == "Other" or total >= k, (dim["column"], value, total)
+    provinces = cube["dims"][dims.index("your_current_residency_province")]["values"]
+    assert "Other" in provinces and "Papua" not in provinces
+    assert "Papua" not in json.dumps(cube)
+    # Chart cubes add up to the chart totals for single-answer columns.
+    sector = cube["charts"]["current_occupation_job_sector"]
+    assert sum(r[-1] for r in sector["rows"]) == dash["kpis"]["records"]
