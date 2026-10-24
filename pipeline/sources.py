@@ -22,7 +22,8 @@ def from_fixtures(folder: Path) -> list[SheetSnapshot | SourceError]:
     sheets: list[SheetSnapshot | SourceError] = []
     for path in sorted(folder.glob("*.json")):
         raw = json.loads(path.read_text())
-        sheets.append(SheetSnapshot(raw["spreadsheet_id"], raw["title"], raw.get("modified_time"), raw["tabs"]))
+        sheets.append(SheetSnapshot(raw["spreadsheet_id"], raw["title"], raw.get("modified_time"), raw["tabs"],
+                                    frozenset(raw.get("unread_columns", []))))
     return sheets
 
 

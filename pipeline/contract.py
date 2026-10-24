@@ -24,6 +24,8 @@ class SheetSnapshot:
     title: str
     modified_time: str | None
     tabs: dict[str, list[list[str]]]
+    # Columns whose values were not read (left out of a partial load); profiled as unknown.
+    unread: frozenset[str] = frozenset()
 
 
 @dataclass

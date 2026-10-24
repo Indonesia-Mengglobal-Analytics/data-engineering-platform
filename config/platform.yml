@@ -31,6 +31,11 @@ governance:
   min_group_size: 5
   # Max categories shown per chart; the rest are folded into "Other".
   max_categories: 12
+  # Checkbox questions: answers are split on ", " and each option is counted.
+  multi_select:
+    - which_regions_are_you_interested_in_studying_in
+    - preferred_country_of_study
+    - referral_source
   # Column classification, first matching rule wins (regex on column_name).
   # personal:  identifies a person; never published, not even as counts.
   # sensitive: special-category data (health, disability, relationships); never published.

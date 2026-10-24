@@ -94,7 +94,7 @@
   const tag = (klass) => `<span class="tag tag-${esc(klass)}" title="${esc(CLASS_INFO[klass] || "")}">${esc(klass.replace("_", " "))}</span>`;
   const slug = (t) => String(t).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
   const cap = (s) => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
-  const triggerLabel = (t) => ({ schedule: "Scheduled", workflow_dispatch: "Manual", push: "Code change", local: "Local" }[t] || t);
+  const triggerLabel = (t) => ({ schedule: "Scheduled", workflow_dispatch: "Manual", push: "Code change", local: "Local", seed: "Initial load" }[t] || t);
 
   // ---------- icons ----------
   const ICONS = {
@@ -271,6 +271,7 @@
       main = head(`${table}`, esc(s.table.table_description || ""), `<a class="btn" href="${esc(s.url)}" target="_blank" rel="noopener">${icon("sheet")} Open sheet</a> ${runBtn(s.id)}`,
         [["sheets", "#/catalog"], [sc, "#/catalog"], [table, null]]) +
         `<p style="margin:-8px 0 12px" class="muted small">${sc === "raw" ? "Table" : "View"} · Owner <b>${esc(s.table.owner_email)}</b> · ${fmtInt(s.rows)} rows · Version ${esc(s.table.version || "–")} · Refreshed ${esc(ago(s.ingested_at))}</p>
+        ${s.partial_load ? partialNote() : ""}
         <nav class="tabs">${tabs.map(([k, l]) => `<a href="${base}/${k}/${sc}" class="${tab === k ? "active" : ""}">${l}</a>`).join("")}</nav>`;
       if (tab === "overview") {
         main += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Column</th><th>Type</th><th>Comment</th><th>Tags</th><th class="num">Filled</th></tr></thead><tbody>
@@ -303,7 +304,7 @@
           .map(([i, k, d], n) => `${n ? '<div class="dag-edge"></div>' : ""}<div class="dag-node"><div class="k">${icon(i)} <span style="overflow:hidden;text-overflow:ellipsis">${esc(k)}</span></div><div class="d">${esc(d)}</div></div>`).join("")}</div>`;
       } else if (tab === "quality") {
         const q = (D.dashboard.sources[s.id] || {}).quality || [];
-        const low = s.columns.filter((c) => c.completeness < 0.5);
+        const low = s.columns.filter((c) => c.completeness != null && c.completeness < 0.5);
         main += `<div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Check</th><th>Result</th><th>Status</th></tr></thead><tbody>
           <tr><td>Format contract (tabs, dictionary, header match)</td><td>Passed</td><td>${badge("ok", "Pass")}</td></tr>
           ${q.map((x) => `<tr><td>${esc(x.check)}</td><td>${esc(x.value)}</td><td>${badge(x.status, { ok: "Pass", warn: "Warning", fail: "Fail" }[x.status])}</td></tr>`).join("")}
@@ -418,18 +419,21 @@
     const pick = ids.length > 1 ? `<select class="select" id="dash-pick" aria-label="Dashboard">${ids.map((x) => `<option value="${esc(x)}" ${x === id ? "selected" : ""}>${esc(all[x].title)}</option>`).join("")}</select>` : "";
     const charts = d.charts.filter((c) => c.class === "categorical");
     const meta = d.charts.filter((c) => c.class === "metadata");
-    return head(d.title, `Published ${esc(when(D.dashboard.generated_at))}`, pick, [["Dashboards", "#/dashboards"], [d.title, null]]) + `
+    const src = sources().find((x) => x.id === id);
+    return head(d.title, `Published ${esc(when(D.dashboard.generated_at))}`, pick, [["Dashboards", "#/dashboards"], [d.title, null]]) +
+      (src && src.partial_load ? partialNote() : "") + `
       <div class="canvas">
         <div class="widget w2 counter"><h3>Records</h3><div class="value">${fmtInt(k.records)}</div><div class="sub">rows in the DATA tab</div></div>
-        <div class="widget w2 counter"><h3>Duplicate submissions</h3><div class="value">${fmtInt(k.duplicate_submissions ?? 0)}</div><div class="sub">same email submitted again</div></div>
-        <div class="widget w2 counter"><h3>Average completeness</h3><div class="value">${pct(k.avg_completeness)}</div><div class="sub">across ${k.columns} columns</div></div>
+        <div class="widget w2 counter"><h3>Duplicate submissions</h3><div class="value">${fmtInt(k.duplicate_submissions)}</div><div class="sub">${k.duplicate_submissions == null ? "not measured yet" : "same email submitted again"}</div></div>
+        <div class="widget w2 counter"><h3>Average completeness</h3><div class="value">${pct(k.avg_completeness)}</div><div class="sub">across ${k.columns_measured ?? k.columns} of ${k.columns} columns</div></div>
         ${d.timeline.length ? `<div class="widget w6"><h3>Submissions per day</h3><div class="sub">by form timestamp</div>${timelineChart(d.timeline)}</div>` : ""}
-        ${charts.map((c, i) => `<div class="widget"><h3>${esc(label(c.column))}</h3><div class="sub">${c.distinct} distinct answers</div>${hbar(c.values, PALETTE[i % PALETTE.length])}</div>`).join("")}
+        ${charts.map((c, i) => `<div class="widget"><h3>${esc(label(c.column))}</h3><div class="sub">${c.multi ? `${c.distinct} options · people can pick several` : `${c.distinct} distinct answers`}</div>${hbar(c.values, PALETTE[i % PALETTE.length])}</div>`).join("")}
         ${meta.map((c) => `<div class="widget w2"><h3>${esc(label(c.column))}</h3><div class="sub">consent / declaration</div>${hbar(c.values, "--c3")}</div>`).join("")}
         <div class="widget w6"><h3>Data quality</h3><div class="table-wrap"><table><tbody>${d.quality.map((x) => `<tr><td>${esc(x.check)}</td><td class="num">${esc(x.value)}</td><td>${badge(x.status, { ok: "Pass", warn: "Warning", fail: "Fail" }[x.status])}</td></tr>`).join("") || `<tr><td class="muted">No checks.</td></tr>`}</tbody></table></div></div>
       </div>`;
   }
 
+  const partialNote = () => `<div class="callout warn"><b>Initial load.</b> This data was loaded once through a Google connector, reading only the columns that feed the charts. Personal and free-text columns show "–" until the scheduled pipeline (service account) runs.</div>`;
   const label = (column) => cap(column.replace(/_/g, " ").replace(/\bphd\b/g, "PhD"));
 
   function hbar(values, color) {

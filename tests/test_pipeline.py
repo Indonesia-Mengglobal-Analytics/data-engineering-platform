@@ -173,3 +173,32 @@ def test_failed_run_keeps_last_good_data(tmp_path):
     assert jobs["runs"][0]["status"] == "failed"
     assert jobs["runs"][0]["tasks"][0]["status"] == "failed"
     assert len(catalog["sources"]) == 2
+
+
+def test_day_first_timestamps_and_multi_select_and_partial_load(tmp_path):
+    fixtures = tmp_path / "fx"
+    fixtures.mkdir()
+    sheet = copy.deepcopy(DEMO)
+    rows = sheet["tabs"]["DATA"][1:]
+    for i, row in enumerate(rows):
+        # Day-first dates that would also parse month-first (01/07 = 1 July, not 7 January).
+        row[0] = f"0{1 + i % 3}/07/2026 10:00:00"
+        row[23] = "Europe, Asia Pacific" if i % 2 else "Europe"
+    sheet["unread_columns"] = ["email_address", "research_proposal_draft"]
+    (fixtures / "sheet.json").write_text(json.dumps(sheet))
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "pipeline" / "build.py"), "--fixtures", str(fixtures),
+         "--out", str(tmp_path / "out"), "--warehouse", str(tmp_path / "w.duckdb")],
+        env={**os.environ, "SITE_PIN": PIN}, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    dash = unseal(json.loads((tmp_path / "out" / "dashboard.json").read_text()), PIN)["sources"][DEMO["spreadsheet_id"]]
+    assert [p["date"] for p in dash["timeline"]] == ["2026-07-01", "2026-07-02", "2026-07-03"]
+    regions = next(c for c in dash["charts"] if c["column"] == "which_regions_are_you_interested_in_studying_in")
+    assert regions["multi"]
+    assert {v["value"]: v["count"] for v in regions["values"]} == {"Europe": 148, "Asia Pacific": 74}
+    assert "duplicate_submissions" not in dash["kpis"]
+    catalog = unseal(json.loads((tmp_path / "out" / "catalog.json").read_text()), PIN)
+    cols = {c["name"]: c["completeness"] for c in catalog["sources"][0]["columns"]}
+    assert cols["email_address"] is None and cols["timestamp"] == 1.0
+    assert catalog["sources"][0]["partial_load"] is True

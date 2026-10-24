@@ -38,7 +38,9 @@ from sources import GoogleSource, SourceError, from_fixtures  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUTS = ("catalog", "jobs", "governance", "dashboard")
 MAX_RUNS = 50
-TIMESTAMP_FORMATS = ["%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]
+# Google Forms writes the timestamp in the sheet's locale, so the format is chosen per column, not per value:
+# "01/07/2026" is 1 July in an Indonesian sheet and 7 January in a US one.
+TIMESTAMP_FORMATS = ["%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y", "%m/%d/%Y"]
 
 
 def now() -> str:
@@ -151,42 +153,69 @@ def _filled(column: str) -> str:
     return f"""count(*) FILTER (WHERE nullif(trim("{column}"), '') IS NOT NULL)"""
 
 
-def profile(con, table: str, columns: list[str]) -> tuple[int, dict[str, float]]:
+def profile(con, table: str, columns: list[str], unread: frozenset[str]) -> tuple[int, dict[str, float | None]]:
     total = con.execute(f'SELECT count(*) FROM raw."{table}"').fetchone()[0]
-    if not columns:
-        return total, {}
-    exprs = ", ".join(_filled(c) for c in columns)
-    filled = con.execute(f'SELECT {exprs} FROM raw."{table}"').fetchone()
-    return total, {c: (round(f / total, 4) if total else 0.0) for c, f in zip(columns, filled)}
+    read = [c for c in columns if c not in unread]
+    completeness: dict[str, float | None] = {c: None for c in columns}
+    if read:
+        exprs = ", ".join(_filled(c) for c in read)
+        filled = con.execute(f'SELECT {exprs} FROM raw."{table}"').fetchone()
+        completeness.update({c: (round(f / total, 4) if total else 0.0) for c, f in zip(read, filled)})
+    return total, completeness
 
 
-def dashboard_for(con, table: str, classes: dict[str, str], gov: dict, total: int, completeness: dict) -> dict:
+def timestamp_format(con, table: str) -> str | None:
+    """The format that parses the most timestamps in the column (first listed wins a tie)."""
+    best, best_count = None, 0
+    for fmt in TIMESTAMP_FORMATS:
+        count = con.execute(
+            f"""SELECT count(try_strptime(trim("timestamp"), '{fmt}')) FROM raw."{table}" """
+        ).fetchone()[0]
+        if count > best_count:
+            best, best_count = fmt, count
+    return best
+
+
+def dashboard_for(con, table: str, classes: dict[str, str], gov: dict, total: int, completeness: dict,
+                  unread: frozenset[str] = frozenset()) -> dict:
     min_group, max_categories = gov["min_group_size"], gov["max_categories"]
+    multi = set(gov.get("multi_select", []))
     out: dict = {"kpis": {"records": total}, "charts": [], "timeline": [], "quality": []}
 
-    if "timestamp" in classes:
-        formats = "[" + ", ".join(f"'{f}'" for f in TIMESTAMP_FORMATS) + "]"
-        rows = con.execute(
-            f"""SELECT CAST(try_strptime(trim("timestamp"), {formats}) AS DATE) AS day, count(*)
-                FROM raw."{table}" GROUP BY 1 ORDER BY 1"""
-        ).fetchall()
-        out["timeline"] = [{"date": str(d) if d else None, "count": n} for d, n in rows]
-        unparsed = sum(n for d, n in rows if d is None)
+    if "timestamp" in classes and "timestamp" not in unread:
+        fmt = timestamp_format(con, table)
+        if fmt:
+            rows = con.execute(
+                f"""SELECT CAST(try_strptime(trim("timestamp"), '{fmt}') AS DATE) AS day, count(*)
+                    FROM raw."{table}" GROUP BY 1 ORDER BY 1"""
+            ).fetchall()
+            out["timeline"] = [{"date": str(d) if d else None, "count": n} for d, n in rows]
+            unparsed = sum(n for d, n in rows if d is None)
+        else:
+            unparsed = total
         if unparsed:
             out["quality"].append({"check": "Unreadable timestamps", "value": unparsed, "status": "warn"})
 
     for column, klass in classes.items():
-        if klass not in COUNTED or column == "timestamp":
+        if klass not in COUNTED or column == "timestamp" or column in unread:
             continue
-        counts = con.execute(
-            f"""SELECT coalesce(nullif(trim("{column}"), ''), '(blank)'), count(*)
-                FROM curated."{table}" GROUP BY 1"""
-        ).fetchall()
-        out["charts"].append(
-            {"column": column, "class": klass, "distinct": len(counts), "values": suppress(counts, min_group, max_categories)}
-        )
+        if column in multi:
+            # One count per option ticked; a person can appear under several options.
+            counts = con.execute(
+                f"""SELECT option, count(*) FROM (
+                      SELECT trim(unnest(string_split("{column}", ', '))) AS option
+                      FROM curated."{table}" WHERE nullif(trim("{column}"), '') IS NOT NULL)
+                    WHERE option <> '' GROUP BY 1"""
+            ).fetchall()
+        else:
+            counts = con.execute(
+                f"""SELECT coalesce(nullif(trim("{column}"), ''), '(blank)'), count(*)
+                    FROM curated."{table}" GROUP BY 1"""
+            ).fetchall()
+        out["charts"].append({"column": column, "class": klass, "multi": column in multi, "distinct": len(counts),
+                              "values": suppress(counts, min_group, max_categories)})
 
-    if "email_address" in classes and total:
+    if "email_address" in classes and "email_address" not in unread and total:
         dupes = con.execute(
             f"""SELECT coalesce(sum(n - 1), 0) FROM (
                   SELECT count(*) AS n FROM raw."{table}"
@@ -198,15 +227,17 @@ def dashboard_for(con, table: str, classes: dict[str, str], gov: dict, total: in
             {"check": "Duplicate submissions (same email)", "value": int(dupes), "status": "warn" if dupes else "ok"}
         )
 
-    consent = [c for c in classes if "consent" in c]
+    consent = [c for c in classes if "consent" in c and completeness.get(c) is not None]
     for column in consent:
         out["quality"].append(
             {"check": f"Consent answered: {column}", "value": f"{completeness[column]:.0%}",
              "status": "ok" if completeness[column] >= 0.999 else "fail"}
         )
-    if completeness:
-        out["kpis"]["avg_completeness"] = round(sum(completeness.values()) / len(completeness), 4)
+    measured = [v for v in completeness.values() if v is not None]
+    if measured:
+        out["kpis"]["avg_completeness"] = round(sum(measured) / len(measured), 4)
     out["kpis"]["columns"] = len(classes)
+    out["kpis"]["columns_measured"] = len(measured)
     return out
 
 
@@ -237,9 +268,9 @@ def publish(con, checked, tables, classes, config, previous, only, run) -> dict:
         if result.registered:
             table = tables[sheet.spreadsheet_id]
             names = [c["column_name"] for c in result.columns]
-            total, completeness = profile(con, table, names)
+            total, completeness = profile(con, table, names, sheet.unread)
             entry.update({"fqn": f"sheets.raw.{table}", "curated_fqn": f"sheets.curated.{table}", "rows": total,
-                          "ingested_at": run["started_at"]})
+                          "ingested_at": run["started_at"], "partial_load": bool(sheet.unread)})
             for c in result.columns:
                 klass = classes[sheet.spreadsheet_id][c["column_name"]]
                 entry["columns"].append({
@@ -249,7 +280,8 @@ def publish(con, checked, tables, classes, config, previous, only, run) -> dict:
                     "completeness": completeness[c["column_name"]],
                 })
             dashboard[sheet.spreadsheet_id] = {
-                "title": sheet.title, **dashboard_for(con, table, classes[sheet.spreadsheet_id], gov, total, completeness)
+                "title": sheet.title,
+                **dashboard_for(con, table, classes[sheet.spreadsheet_id], gov, total, completeness, sheet.unread)
             }
         catalog.append(entry)
 
