@@ -458,3 +458,11 @@ a.cite:hover { background: var(--primary); color: #fff; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) { .flow-node.on .halo { animation: none; } .flow-line.moving { animation: none; } }
 .flow-node .hit { fill: transparent; }
 .flow-node:focus-visible .hit { stroke: var(--primary); stroke-width: 2; }
+.seg-group { display: inline-flex; border: 1px solid var(--border); border-radius: 15px; padding: 2px; background: var(--bg-subtle); }
+.seg-opt { height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: none; color: var(--text-muted); font: 600 12px var(--font); cursor: pointer; white-space: nowrap; }
+.seg-opt[aria-checked="true"] { background: var(--bg); color: var(--primary); box-shadow: 0 1px 2px rgba(0, 0, 0, .1); }
+.seg-opt:disabled { opacity: .45; cursor: not-allowed; }
+.ask-progress { display: grid; gap: 4px; margin-top: 8px; }
+.ask-progress .bar { height: 6px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
+.ask-progress .bar span { display: block; height: 100%; width: 0; background: var(--primary); transition: width .3s; }
+@media (max-width: 900px) { .ask-bar { flex-wrap: wrap; } .ask-mode { order: 3; width: 100%; } }

@@ -1113,10 +1113,12 @@
         node.classList.toggle("done", i < active);
       });
       const st = stages[active];
-      $("#flow-caption").innerHTML = `<span class="flow-step">${active + 1}/${stages.length}</span>
+      const caption = $("#flow-caption", el);
+      if (!caption) return;
+      caption.innerHTML = `<span class="flow-step">${active + 1}/${stages.length}</span>
         <div><b>${esc(st.title)}</b> · <span class="muted">${esc(st.stat)}</span><br>${esc(st.desc)}</div>
         <a class="btn btn-sm" href="${st.href}">Open</a>`;
-      const t = $("#flow-toggle");
+      const t = $("#flow-toggle", el);
       if (t) { t.textContent = playing ? "Pause" : "Play"; t.setAttribute("aria-pressed", String(playing)); }
     };
     const go = (i) => { active = (i + stages.length) % stages.length; select(); };
@@ -1132,7 +1134,10 @@
       if (node && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playing = false; start(); go(Number(node.dataset.i)); }
     });
     let width = el.clientWidth;
-    const ro = new ResizeObserver(() => { if (Math.abs(el.clientWidth - width) > 40) { width = el.clientWidth; draw(); } });
+    const ro = new ResizeObserver(() => {
+      if (!document.body.contains(el)) { ro.disconnect(); clearInterval(flowTimer); return; }
+      if (Math.abs(el.clientWidth - width) > 40) { width = el.clientWidth; draw(); }
+    });
     ro.observe(el);
     draw();
     start();
@@ -1150,7 +1155,18 @@
   // counts over the dashboard filter cube. The key stays in this tab and goes only to api.anthropic.com.
   const SDK_URL = "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.133.0/+esm";
   const MODEL = "claude-opus-5-5";
-  const ASK = { kb: null, index: null, thread: [], messages: [], busy: false, sdk: null };
+  // Free option: an open model running in the browser with WebLLM (WebGPU). Weights download once per
+  // browser from Hugging Face and are cached; questions and passages never leave the device.
+  const WEBLLM_URL = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/+esm";
+  const LOCAL_MODELS = [
+    { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", name: "Qwen2.5 1.5B", size: "~1.6 GB", note: "balanced" },
+    { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", name: "Qwen2.5 0.5B", size: "~0.9 GB", note: "fastest, weakest" },
+    { id: "Qwen2.5-3B-Instruct-q4f16_1-MLC", name: "Qwen2.5 3B", size: "~2.5 GB", note: "best answers, needs a stronger GPU" },
+  ];
+  const ASK = { kb: null, index: null, thread: [], messages: [], local: [], busy: false, sdk: null, webllm: null, engine: null, engineModel: null };
+  const hasWebGPU = () => !!navigator.gpu;
+  const askEngine = () => store.get("im_ask_engine") || (hasWebGPU() ? "local" : "claude");
+  const localModel = () => LOCAL_MODELS.find((m) => m.id === store.get("im_local_model")) || LOCAL_MODELS[0];
 
   async function loadKnowledge() {
     if (ASK.kb) return ASK.kb;
@@ -1331,11 +1347,22 @@ ${srcs}`;
         <form class="ask-box" id="ask-form">
           <textarea id="ask-input" rows="2" placeholder="Ask about your data…" aria-label="Question"></textarea>
           <div class="ask-bar">
+            <div class="seg-group" role="radiogroup" aria-label="Answer engine">
+              <button type="button" role="radio" class="seg-opt" data-engine="local" aria-checked="${askEngine() === "local"}" ${hasWebGPU() ? "" : "disabled title=\"Needs WebGPU: Chrome or Edge on a laptop or desktop\""}>Free · in browser</button>
+              <button type="button" role="radio" class="seg-opt" data-engine="claude" aria-checked="${askEngine() === "claude"}">Claude · API key</button>
+            </div>
             <span class="ask-mode" id="ask-mode"></span>
-            <button class="btn btn-sm" type="button" id="ask-key-btn">${key ? "Change API key" : "Add API key"}</button>
+            <button class="btn btn-sm" type="button" id="ask-key-btn"></button>
             <button class="btn btn-primary" id="ask-send" type="submit">${icon("spark", 12)} Ask</button>
           </div>
+          <div class="ask-progress" id="ask-progress" hidden><div class="bar"><span id="ask-progress-fill"></span></div><span class="muted small" id="ask-progress-text"></span></div>
         </form>
+        <div class="ask-key" id="ask-model" hidden>
+          <label for="ask-model-select"><b>In-browser model</b> <span class="muted small">downloads once to this browser, then cached; nothing you ask leaves this device</span></label>
+          <div class="ask-key-row"><select id="ask-model-select" class="select">${LOCAL_MODELS.map((m) => `<option value="${m.id}" ${m.id === localModel().id ? "selected" : ""}>${m.name} · ${m.size} · ${m.note}</option>`).join("")}</select>
+            <button class="btn btn-primary btn-sm" type="button" id="ask-model-save">Use</button></div>
+          <p class="muted small">Small open models answer from the matching passages only and can be wrong more often than Claude. For counts with filters (e.g. LPDP applicants from Jawa Barat) use the dashboard filters or Claude.</p>
+        </div>
         <div class="ask-key" id="ask-key" hidden>
           <label for="ask-key-input"><b>Anthropic API key</b> <span class="muted small">kept in this tab only (sessionStorage), sent only to api.anthropic.com</span></label>
           <div class="ask-key-row"><input id="ask-key-input" type="password" autocomplete="off" placeholder="sk-ant-…" value="">
@@ -1344,16 +1371,31 @@ ${srcs}`;
           <p class="muted small">Without a key, Ask shows the best-matching passages instead of a written answer. What is sent to Claude: your question, matching passages and privacy-filtered counts. No rows or personal columns exist on this site.</p>
         </div>
       </div>`;
-    const mode = () => { $("#ask-mode").innerHTML = store.get("im_anthropic_key") ? `${badge("ok", "Claude · " + MODEL)}` : `${badge("skipped", "Search only")}`; };
+    const mode = () => {
+      const eng = askEngine();
+      $$(".seg-opt", el).forEach((b) => b.setAttribute("aria-checked", String(b.dataset.engine === eng)));
+      $("#ask-mode").innerHTML = eng === "local"
+        ? badge("ok", `${localModel().name} · ${ASK.engine && ASK.engineModel === localModel().id ? "ready" : "free"}`)
+        : store.get("im_anthropic_key") ? badge("ok", "Claude · " + MODEL) : badge("skipped", "Search only");
+      $("#ask-key-btn").textContent = eng === "local" ? "Change model" : store.get("im_anthropic_key") ? "Change API key" : "Add API key";
+    };
     mode();
+    el.addEventListener("click", (e) => {
+      const opt = e.target.closest(".seg-opt");
+      if (opt && !opt.disabled) { store.set("im_ask_engine", opt.dataset.engine); $("#ask-key").hidden = true; $("#ask-model").hidden = true; mode(); }
+    });
+    $("#ask-model-save").addEventListener("click", () => { store.set("im_local_model", $("#ask-model-select").value); $("#ask-model").hidden = true; mode(); });
     drawThread();
-    $("#ask-key-btn").addEventListener("click", () => { $("#ask-key").hidden = !$("#ask-key").hidden; $("#ask-key-input").focus(); });
+    $("#ask-key-btn").addEventListener("click", () => {
+      if (askEngine() === "local") { $("#ask-model").hidden = !$("#ask-model").hidden; return; }
+      $("#ask-key").hidden = !$("#ask-key").hidden; $("#ask-key-input").focus();
+    });
     $("#ask-key-save").addEventListener("click", () => {
       const v = $("#ask-key-input").value.trim();
       if (v) { store.set("im_anthropic_key", v); ASK.sdk = null; }
-      $("#ask-key").hidden = true; $("#ask-key-btn").textContent = "Change API key"; mode();
+      $("#ask-key").hidden = true; mode();
     });
-    $("#ask-key-clear")?.addEventListener("click", () => { store.del("im_anthropic_key"); $("#ask-key").hidden = true; $("#ask-key-btn").textContent = "Add API key"; mode(); });
+    $("#ask-key-clear")?.addEventListener("click", () => { store.del("im_anthropic_key"); $("#ask-key").hidden = true; mode(); });
     const input = $("#ask-input");
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#ask-form").requestSubmit(); } });
     $("#ask-form").addEventListener("submit", (e) => {
@@ -1366,7 +1408,7 @@ ${srcs}`;
     el.addEventListener("click", (e) => {
       const s = e.target.closest("[data-suggest]");
       if (s && !ASK.busy) askQuestion(s.dataset.suggest);
-      if (e.target.closest("#ask-clear")) { ASK.thread = []; ASK.messages = []; drawThread(); }
+      if (e.target.closest("#ask-clear")) { ASK.thread = []; ASK.messages = []; ASK.local = []; drawThread(); }
     });
     loadKnowledge().catch((err) => { ASK.thread.push({ role: "error", text: err.message }); drawThread(); });
   }
@@ -1387,8 +1429,10 @@ ${srcs}`;
       const body = m.text ? renderAnswer(m.text, cited) : (m.done ? "" : `<p class="muted typing">Thinking…</p>`);
       const steps = m.steps?.length ? `<details class="steps" ${m.done ? "" : "open"}><summary>${m.steps.length} step${m.steps.length > 1 ? "s" : ""}</summary>
           <ol>${m.steps.map((s) => `<li><code>${esc(s.name)}</code> ${esc(s.summary)}</li>`).join("")}</ol></details>` : "";
-      const passages = m.passages?.length ? `<div class="sources"><div class="muted small">${m.searchOnly ? "Best-matching passages" : "Sources"}</div>${
-        m.passages.filter((p) => m.searchOnly || cited.has(p.id)).map((p) => `<a class="source" href="${esc(p.link)}"><span class="cite">${esc(p.id)}</span><span><b>${esc(p.title)}</b>${m.searchOnly ? `<br><span class="muted small">${esc(p.text.slice(0, 260))}${p.text.length > 260 ? "…" : ""}</span>` : ""}</span></a>`).join("")}</div>` : "";
+      const byId = new Map((ASK.kb?.passages || []).map((p) => [p.id, p]));
+      const shown = m.searchOnly ? (m.passages || []) : [...cited].map((id) => byId.get(id)).filter(Boolean);
+      const passages = shown.length ? `<div class="sources"><div class="muted small">${m.searchOnly ? "Best-matching passages" : "Sources"}</div>${
+        shown.map((p) => `<a class="source" href="${esc(p.link)}"><span class="cite">${esc(p.id)}</span><span><b>${esc(p.title)}</b>${m.searchOnly ? `<br><span class="muted small">${esc(p.text.slice(0, 260))}${p.text.length > 260 ? "…" : ""}</span>` : ""}</span></a>`).join("")}</div>` : "";
       return `<div class="msg assistant"><div class="avatar-ai">${icon("spark", 14)}</div><div class="answer">${steps}${body}${m.done ? passages : ""}${m.note ? `<p class="muted small">${esc(m.note)}</p>` : ""}</div></div>`;
     }).join("") + (ASK.busy ? "" : `<div class="ask-tools"><button class="linkbtn" id="ask-clear">New conversation</button></div>`);
     t.scrollTop = t.scrollHeight;
@@ -1403,7 +1447,9 @@ ${srcs}`;
     try {
       await loadKnowledge();
       const key = store.get("im_anthropic_key");
-      if (!key) {
+      if (askEngine() === "local" && hasWebGPU()) {
+        await answerLocally(q, reply);
+      } else if (!key) {
         Object.assign(reply, { passages: retrieve(q, 5), searchOnly: true, done: true,
           note: "Search only. Add an Anthropic API key above to get a written answer." });
       } else {
@@ -1417,7 +1463,53 @@ ${srcs}`;
     }
   }
 
+  async function loadLocalEngine() {
+    const model = localModel();
+    if (ASK.engine && ASK.engineModel === model.id) return ASK.engine;
+    const bar = $("#ask-progress"), fill = $("#ask-progress-fill"), text = $("#ask-progress-text");
+    const progress = (r) => {
+      if (!bar) return;
+      bar.hidden = false;
+      fill.style.width = `${Math.round((r.progress || 0) * 100)}%`;
+      text.textContent = `${model.name}: ${r.text || "loading…"}`;
+    };
+    progress({ progress: 0, text: `first use downloads ${model.size} once, then it is cached` });
+    if (!ASK.webllm) ASK.webllm = await import(WEBLLM_URL);
+    if (ASK.engine) await ASK.engine.reload(model.id);
+    else ASK.engine = await ASK.webllm.CreateMLCEngine(model.id, { initProgressCallback: progress });
+    ASK.engineModel = model.id;
+    if (bar) bar.hidden = true;
+    return ASK.engine;
+  }
+
+  async function answerLocally(q, reply) {
+    const model = localModel();
+    const engine = await loadLocalEngine();
+    // The model's context is 4,096 tokens: the five best passages, each trimmed, and the last two exchanges.
+    const passages = retrieve(q, 5).map((p) => ({ ...p, text: p.text.length > 700 ? p.text.slice(0, 700) + "…" : p.text }));
+    reply.passages.push(...passages);
+    reply.steps.push({ name: "search_knowledge", summary: `“${q.slice(0, 60)}” → ${passages.map((p) => p.id).join(", ") || "no matches"}` });
+    const system = `You answer questions about Indonesia Mengglobal's data platform using ONLY the passages below.
+If the passages don't contain the answer, say so in one sentence. Cite passages like [P12] after each fact.
+Never guess numbers. Groups under 5 people are shown as "fewer than 5": repeat that, never estimate them.
+Answer in the language of the question (Bahasa Indonesia or English), in at most 6 short sentences or bullets.
+
+${passageBlock(passages) || "(no matching passages)"}`;
+    const messages = [{ role: "system", content: system }, ...ASK.local.slice(-4), { role: "user", content: q }];
+    const stream = await engine.chat.completions.create({ messages, stream: true, temperature: 0.2, max_tokens: 600 });
+    for await (const chunk of stream) {
+      reply.text += chunk.choices?.[0]?.delta?.content || "";
+      drawThreadSoon();
+    }
+    ASK.local.push({ role: "user", content: q }, { role: "assistant", content: reply.text });
+    reply.note = `Answered by ${model.name} in your browser (free). Small models can be wrong: check the cited passages. For filtered counts use the dashboard or Claude.`;
+    const modeEl = $("#ask-mode");
+    if (modeEl) modeEl.innerHTML = badge("ok", `${model.name} · ready`);
+  }
+
   function friendlyError(err) {
+    if (err?.name === "WebGPUNotAvailableError" || /webgpu/i.test(err?.message || "")) return "This browser can't run the free model (no WebGPU). Use Chrome or Edge on a laptop or desktop, or switch to Claude.";
+    if (/out of memory|device lost|OOM/i.test(err?.message || "")) return "The model didn't fit in this device's GPU memory. Pick a smaller model under Change model.";
     const s = err?.status;
     if (s === 401) return "The API key was rejected (401). Check it under Change API key.";
     if (s === 429) return "Rate limited by the API (429). Wait a moment and ask again.";

@@ -68,6 +68,19 @@ The site's SQL Editor starts the query workflow with a fine-grained GitHub token
 
 It is light: a few hundred rows run through DuckDB in seconds, and each run writes a handful of Parquet files and sheets.
 
+## Ask (RAG)
+
+The pipeline writes an encrypted knowledge base (`knowledge.json`) of short passages built only from what the site
+already shows: catalog, column dictionary, governance, data quality, layer metrics, dashboard figures and runs.
+The Ask page searches it in the browser (BM25) and answers with one of two engines:
+
+| Engine | Cost | Where it runs | Notes |
+|---|---|---|---|
+| **Free · in browser** (default) | Free | On the viewer's device, with [WebLLM](https://github.com/mlc-ai/web-llm) and WebGPU | Qwen2.5 1.5B (~1.6 GB), 0.5B (~0.9 GB) or 3B (~2.5 GB), downloaded once per browser and cached. Needs Chrome or Edge on a laptop or desktop. Answers from the 5 best passages; nothing leaves the device. |
+| **Claude · API key** | The viewer's Anthropic API account | api.anthropic.com | `claude-opus-5-5`; can also count records with filters through the privacy-filtered dashboard cube. The key stays in the browser tab. |
+
+Without WebGPU or a key, Ask still shows the best-matching passages.
+
 ## Security model
 
 The repository and its Pages site are public, so:
