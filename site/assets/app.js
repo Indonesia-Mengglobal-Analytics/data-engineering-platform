@@ -235,6 +235,8 @@
     if (pick) pick.addEventListener("change", () => (location.hash = `#/dashboards/${encodeURIComponent(pick.value)}`));
     const dash = $("#dash");
     if (dash) mountDashboard(dash);
+    const flowEl = $("#flow");
+    if (flowEl) mountFlow(flowEl);
     const sqlEl = $("#sqlpage");
     if (sqlEl) mountSql(sqlEl);
     const askEl = $("#ask");
@@ -254,10 +256,11 @@
     sources().forEach((s) => counts[s.status]++);
     const rows = registered().reduce((a, s) => a + (s.rows || 0), 0);
     const withheld = D.governance.sources.reduce((a, s) => a + s.withheld.length, 0);
-    return head("Welcome to Indonesia Mengglobal's data workspace", "Google Sheets → DuckDB on GitHub Actions → this site. No servers.", runBtn()) + `
+    return head("Welcome to Indonesia Mengglobal's data workspace", "Google Sheets → DuckDB on GitHub Actions → this site. No servers.", runBtn()) +
+      `<div class="card flow-card" id="flow"></div>` + `
       <div class="grid grid-4" style="margin-bottom:16px">
         <a class="card card-link stat" href="#/ingestion"><div class="label">Registered sources</div><div class="value">${counts.registered}</div><div class="muted small">${counts.rejected} rejected · ${counts.unreachable} unreachable</div></a>
-        <a class="card card-link stat" href="#/catalog"><div class="label">Records in catalog</div><div class="value">${fmtInt(rows)}</div><div class="muted small">${registered().length} table${registered().length === 1 ? "" : "s"} in sheets.raw</div></a>
+        <a class="card card-link stat" href="#/catalog"><div class="label">Records in catalog</div><div class="value">${fmtInt(rows)}</div><div class="muted small">${registered().length} table${registered().length === 1 ? "" : "s"} in sheets.gold</div></a>
         <a class="card card-link stat" href="#/runs"><div class="label">Last pipeline run</div><div class="value" style="font-size:20px">${last ? badge(last.status) : "–"}</div><div class="muted small">${last ? `${esc(ago(last.finished_at))} · ${esc(triggerLabel(last.trigger))}` : "No runs yet"}</div></a>
         <a class="card card-link stat" href="#/governance"><div class="label">Columns withheld (PII)</div><div class="value">${withheld}</div><div class="muted small">Groups under ${D.governance.min_group_size} suppressed</div></a>
       </div>
@@ -1017,6 +1020,129 @@
         <div class="table-wrap"><table><thead><tr><th>Pattern</th><th>Tag</th></tr></thead><tbody>${g.rules.map((r) => `<tr><td class="mono">${esc(r.match)}</td><td>${tag(r.class)}</td></tr>`).join("")}</tbody></table></div></div>`;
   }
 
+
+
+  // ---------- animated flow: source to Ask ----------
+  let flowTimer = null;
+  function flowStages() {
+    const last = runs()[0] || {};
+    const L = last.layers || {};
+    const sum = (obj, f) => Object.values(obj || {}).reduce((a, x) => a + (f(x) || 0), 0);
+    const regs = registered();
+    const withheld = (D.governance.sources || []).reduce((a, g) => a + g.withheld.length, 0);
+    const charts = Object.values(D.dashboard.sources || {}).reduce((a, d) => a + d.charts.length, 0);
+    return [
+      { key: "sheets", icon: "sheet", title: "Google Sheets", tint: "--success",
+        stat: `${sources().length} source${sources().length === 1 ? "" : "s"}`,
+        desc: "Live form responses in the Drive folder. The pipeline reads them with a service account, every 6 hours or on demand.", href: "#/ingestion" },
+      { key: "validate", icon: "check", title: "Contract check", tint: "--primary",
+        stat: `${regs.length} registered`,
+        desc: "DATA, COLUMN_METADATA and TABLE_METADATA must agree. Sheets that don't are rejected with the reason.", href: "#/ingestion" },
+      { key: "bronze", icon: "schema", title: "Bronze", tint: "--bronze",
+        stat: `${fmtInt(sum(L.bronze, (b) => b.appended))} rows read`,
+        desc: "This run's snapshot, exactly as read, appended to history with run id and row fingerprint.", href: "#/catalog" },
+      { key: "silver", icon: "view", title: "Silver", tint: "--silver",
+        stat: `${fmtInt(sum(L.silver, (x) => x.dq?.fail))} fail · ${fmtInt(sum(L.silver, (x) => x.updated + x.inserted))} changed`,
+        desc: "Cleaned, checked against the quality rules, one version per applicant and change (SCD type 2).", href: "#/quality" },
+      { key: "gold", icon: "table", title: "Gold", tint: "--gold",
+        stat: `${fmtInt(L.gold?.tables ? sum(L.gold.tables, (n) => n) : regs.reduce((a, x) => a + (x.rows || 0), 0))} records`,
+        desc: "Current applicants that passed every error rule, plus the consolidated table across sources.", href: "#/catalog" },
+      { key: "govern", icon: "shield", title: "Governance", tint: "--danger",
+        stat: `${withheld} columns withheld`,
+        desc: "Personal and sensitive columns are dropped; groups under 5 people are folded or hidden.", href: "#/governance" },
+      { key: "publish", icon: "dashboard", title: "Encrypted publish", tint: "--c1",
+        stat: `${charts} charts`,
+        desc: "Only aggregates leave the run, encrypted with the site PIN (AES-256-GCM) on GitHub Pages.", href: "#/dashboards" },
+      { key: "knowledge", icon: "catalog", title: "Knowledge base", tint: "--c6",
+        stat: ASK.kb ? `${ASK.kb.passages.length} passages` : "passages",
+        desc: "The catalog, rules, quality checks and dashboard figures written out as short passages, indexed in the browser (BM25).", href: "#/ask" },
+      { key: "ask", icon: "spark", title: "Ask", tint: "--primary",
+        stat: "Claude + citations",
+        desc: "Your question retrieves the best passages; Claude answers from them and from privacy-filtered counts, citing each source.", href: "#/ask" },
+    ];
+  }
+
+  function mountFlow(el) {
+    clearInterval(flowTimer);
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const stages = flowStages();
+    let active = 0, playing = !reduce;
+    const draw = () => {
+      const vertical = el.clientWidth < 720;
+      const n = stages.length;
+      const W = vertical ? 360 : 1200, H = vertical ? 96 * n + 24 : 230;
+      const pos = stages.map((_, i) => vertical ? { x: 70, y: 40 + i * 96 } : { x: 70 + i * ((W - 140) / (n - 1)), y: 92 });
+      const path = vertical
+        ? `M ${pos[0].x} ${pos[0].y} L ${pos[n - 1].x} ${pos[n - 1].y}`
+        : pos.map((p, i) => (i ? `C ${pos[i - 1].x + 55} ${pos[i - 1].y + (i % 2 ? -34 : 34)}, ${p.x - 55} ${p.y + (i % 2 ? -34 : 34)}, ${p.x} ${p.y}` : `M ${p.x} ${p.y}`)).join(" ");
+      const particles = reduce ? "" : Array.from({ length: 9 }, (_, i) =>
+        `<circle r="${i % 3 ? 3 : 4.5}" class="flow-dot" style="fill:var(${["--success", "--bronze", "--silver", "--gold", "--c1", "--primary"][i % 6]})">
+          <animateMotion dur="9s" begin="${-i}s" repeatCount="indefinite" rotate="auto"><mpath href="#flow-path"/></animateMotion></circle>`).join("");
+      el.innerHTML = `
+        <div class="flow-head"><div><h3>How your data flows</h3><p class="muted small">From the form to an answer in Ask. Numbers are from the latest run.</p></div>
+          <div class="flow-controls"><button class="btn btn-sm" id="flow-toggle" aria-pressed="${playing}">${playing ? "Pause" : "Play"}</button></div></div>
+        <svg class="flow-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Data flow from Google Sheets to Ask">
+          <defs><linearGradient id="flow-grad" ${vertical ? 'x1="0" y1="0" x2="0" y2="1"' : 'x1="0" y1="0" x2="1" y2="0"'}>
+            <stop offset="0" stop-color="var(--success)"/><stop offset=".3" stop-color="var(--bronze)"/><stop offset=".5" stop-color="var(--gold)"/><stop offset="1" stop-color="var(--primary)"/></linearGradient></defs>
+          <path id="flow-path" d="${path}" class="flow-track"/>
+          <path d="${path}" class="flow-line ${reduce ? "" : "moving"}" stroke="url(#flow-grad)"/>
+          ${particles}
+          ${stages.map((st, i) => {
+            const p = pos[i];
+            const labelX = vertical ? p.x + 44 : p.x, labelY = vertical ? p.y - 4 : p.y + (i % 2 ? 56 : -50);
+            const anchor = vertical ? "start" : "middle";
+            return `<g class="flow-node" data-i="${i}" tabindex="0" role="button" aria-label="${esc(st.title)}: ${esc(st.stat)}" style="--tint:var(${st.tint})">
+              <rect class="hit" x="${vertical ? p.x - 34 : p.x - 62}" y="${vertical ? p.y - 34 : Math.min(p.y - 34, labelY - 16)}" width="${vertical ? W - p.x + 24 : 124}" height="${vertical ? 76 : Math.abs(labelY - p.y) + 54}" rx="10"/>
+              <circle cx="${p.x}" cy="${p.y}" r="30" class="halo"/>
+              <circle cx="${p.x}" cy="${p.y}" r="24" class="disc"/>
+              <g transform="translate(${p.x - 10} ${p.y - 10})" class="glyph"><svg viewBox="0 0 16 16" width="20" height="20">${ICONS[st.icon]}</svg></g>
+              <text x="${labelX}" y="${labelY}" text-anchor="${anchor}" class="t">${esc(st.title)}</text>
+              <text x="${labelX}" y="${labelY + 17}" text-anchor="${anchor}" class="s">${esc(st.stat)}</text>
+            </g>`;
+          }).join("")}
+        </svg>
+        <div class="flow-caption" aria-live="polite" id="flow-caption"></div>
+        <div class="flow-progress">${stages.map((_, i) => `<button data-i="${i}" aria-label="Step ${i + 1}: ${esc(stages[i].title)}"></button>`).join("")}</div>`;
+      select();
+    };
+    // Only classes and the caption change per step, so the particles keep flowing.
+    const select = () => {
+      $$(".flow-node, .flow-progress button", el).forEach((node) => {
+        const i = Number(node.dataset.i);
+        node.classList.toggle("on", i === active);
+        node.classList.toggle("done", i < active);
+      });
+      const st = stages[active];
+      $("#flow-caption").innerHTML = `<span class="flow-step">${active + 1}/${stages.length}</span>
+        <div><b>${esc(st.title)}</b> · <span class="muted">${esc(st.stat)}</span><br>${esc(st.desc)}</div>
+        <a class="btn btn-sm" href="${st.href}">Open</a>`;
+      const t = $("#flow-toggle");
+      if (t) { t.textContent = playing ? "Pause" : "Play"; t.setAttribute("aria-pressed", String(playing)); }
+    };
+    const go = (i) => { active = (i + stages.length) % stages.length; select(); };
+    const tick = () => { if (!document.body.contains(el)) { clearInterval(flowTimer); return; } go(active + 1); };
+    const start = () => { clearInterval(flowTimer); if (playing) flowTimer = setInterval(tick, 2600); };
+    el.addEventListener("click", (e) => {
+      const node = e.target.closest("[data-i]");
+      if (node) { playing = false; start(); go(Number(node.dataset.i)); return; }
+      if (e.target.closest("#flow-toggle")) { playing = !playing; start(); select(); }
+    });
+    el.addEventListener("keydown", (e) => {
+      const node = e.target.closest(".flow-node");
+      if (node && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); playing = false; start(); go(Number(node.dataset.i)); }
+    });
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => { if (Math.abs(el.clientWidth - width) > 40) { width = el.clientWidth; draw(); } });
+    ro.observe(el);
+    draw();
+    start();
+    if (!ASK.kb) loadKnowledge().then(() => {
+      stages[7].stat = `${ASK.kb.passages.length} passages`;
+      const label = $('.flow-node[data-i="7"] .s', el);
+      if (label) label.textContent = stages[7].stat;
+      if (active === 7) select();
+    }).catch(() => {});
+  }
 
   // ---------- Ask (RAG) ----------
   // Retrieval runs in the browser over data/knowledge.json (passages built from published aggregates).

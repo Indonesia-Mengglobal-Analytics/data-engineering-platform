@@ -424,3 +424,37 @@ a.cite:hover { background: var(--primary); color: #fff; text-decoration: none; }
 .sql-label { height: 30px; min-width: 200px; flex: 0 1 320px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: 13px var(--font); }
 #sql-runs table td, #sql-runs table th { padding: 6px 8px; }
 @media (max-width: 900px) { .sql-layout { grid-template-columns: 1fr; } .sql-schema { position: static; max-height: 260px; } }
+
+/* Animated flow on the workspace page */
+.flow-card { margin-bottom: 16px; overflow: hidden; }
+.flow-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.flow-head h3 { margin: 0; font-size: 15px; }
+.flow-head p { margin: 2px 0 0; }
+.flow-svg { width: 100%; height: auto; display: block; margin: 4px 0 8px; overflow: visible; }
+.flow-track { fill: none; stroke: var(--border-subtle); stroke-width: 10; stroke-linecap: round; }
+.flow-line { fill: none; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 10; opacity: .9; }
+.flow-line.moving { animation: flow-dash 1.2s linear infinite; }
+@keyframes flow-dash { to { stroke-dashoffset: -24; } }
+.flow-dot { filter: drop-shadow(0 0 3px rgba(0, 0, 0, .15)); }
+.flow-node { cursor: pointer; outline: none; }
+.flow-node .halo { fill: var(--tint); opacity: 0; transform-box: fill-box; transform-origin: center; }
+.flow-node .disc { fill: var(--bg); stroke: var(--tint); stroke-width: 2; transition: fill .3s; }
+.flow-node .glyph { color: var(--tint); }
+.flow-node .t { font: 600 13px var(--font); fill: var(--text); }
+.flow-node .s { font: 12px var(--font); fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+.flow-node.done .disc { fill: color-mix(in srgb, var(--tint) 14%, var(--bg)); }
+.flow-node.on .disc { fill: var(--tint); }
+.flow-node.on .glyph { color: #fff; }
+.flow-node.on .halo { animation: flow-pulse 1.6s ease-out infinite; }
+.flow-node:hover .disc, .flow-node:focus-visible .disc { stroke-width: 3.5; }
+@keyframes flow-pulse { 0% { opacity: .35; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.6); } }
+.flow-caption { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg-subtle); min-height: 60px; }
+.flow-caption > div { flex: 1; min-width: 0; line-height: 1.5; }
+.flow-step { flex: none; font: 600 12px var(--mono); color: var(--primary); background: var(--primary-soft); border-radius: 10px; padding: 2px 8px; }
+.flow-progress { display: flex; gap: 4px; margin-top: 10px; }
+.flow-progress button { flex: 1; height: 4px; border: 0; padding: 0; border-radius: 2px; background: var(--bg-hover); cursor: pointer; }
+.flow-progress button.done { background: color-mix(in srgb, var(--primary) 45%, var(--bg-hover)); }
+.flow-progress button.on { background: var(--primary); }
+@media (prefers-reduced-motion: reduce) { .flow-node.on .halo { animation: none; } .flow-line.moving { animation: none; } }
+.flow-node .hit { fill: transparent; }
+.flow-node:focus-visible .hit { stroke: var(--primary); stroke-width: 2; }
