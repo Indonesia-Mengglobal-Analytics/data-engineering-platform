@@ -1,0 +1,19 @@
+{
+ "spreadsheet_id": "demo-rejected-volunteers",
+ "title": "Volunteer_Signups_2026 (demo, wrong format)",
+ "modified_time": "2026-10-20T08:00:00Z",
+ "tabs": {
+  "Form Responses 1": [
+   [
+    "Timestamp",
+    "Name",
+    "Division"
+   ],
+   [
+    "7/1/2026 10:00:00",
+    "Demo",
+    "Media"
+   ]
+  ]
+ }
+}

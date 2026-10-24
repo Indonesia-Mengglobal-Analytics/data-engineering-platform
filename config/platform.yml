@@ -23,7 +23,7 @@ contract:
   data_tab: DATA
   column_metadata_tab: COLUMN_METADATA
   table_metadata_tab: TABLE_METADATA
-  column_metadata_headers: [no, column_name, column_description, column_header_location, form_question]
+  column_metadata_headers: ["no", column_name, column_description, column_header_location, form_question]
   table_metadata_headers: [table_name, table_description, owner_email, operation_date_start, operation_date_end, populated_date, purpose, version]
 
 governance:

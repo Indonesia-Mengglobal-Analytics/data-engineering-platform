@@ -1,0 +1,112 @@
+name: Pipeline (Sheets to DuckDB to Pages)
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Spreadsheet ID to refresh alone (blank = all sources)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt pytest==8.3.4
+      - run: pytest -q tests
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+
+      - name: Check secrets
+        env:
+          SITE_PIN: ${{ secrets.SITE_PIN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          [[ "$SITE_PIN" =~ ^[0-9]{12}$ ]] || { echo "::error::Secret SITE_PIN must be exactly 12 digits"; exit 1; }
+          [ -n "$GOOGLE_SERVICE_ACCOUNT_JSON" ] || echo "::warning::GOOGLE_SERVICE_ACCOUNT_JSON is not set; the run will be recorded as failed"
+
+      # Run history and single-source refreshes build on what is live now.
+      - name: Fetch currently published data
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Download previous data
+        env:
+          BASE: ${{ steps.pages.outputs.base_url }}
+        run: |
+          mkdir -p previous
+          for f in catalog jobs governance dashboard; do
+            curl -fsSL "$BASE/data/$f.json" -o "previous/$f.json" || rm -f "previous/$f.json"
+          done
+          ls -la previous
+
+      - name: Run pipeline
+        id: run
+        continue-on-error: true
+        env:
+          SITE_PIN: ${{ secrets.SITE_PIN }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          PREVIOUS_DIR: previous
+          ONLY_SOURCE: ${{ inputs.source }}
+          PIPELINE_SCHEDULE: "17 */6 * * *"
+        run: python pipeline/build.py
+
+      # The warehouse file holds row-level data: it is deleted, never uploaded.
+      - name: Remove warehouse
+        if: always()
+        run: rm -rf build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      # Deploy even when the pipeline failed, so the failed run shows on the site; then fail the job.
+      - name: Report pipeline failure
+        if: steps.run.outcome == 'failure'
+        run: |
+          echo "::error::Pipeline failed; the site keeps the last good data. See the 'Run pipeline' step."
+          echo "failed=true" >> "$GITHUB_OUTPUT"
+        id: report
+    outputs:
+      failed: ${{ steps.report.outputs.failed }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Fail if the pipeline failed
+        if: needs.build.outputs.failed == 'true'
+        run: exit 1
