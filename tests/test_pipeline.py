@@ -132,7 +132,12 @@ def test_build_publishes_only_aggregates(tmp_path):
         assert leaked not in published
 
     dash = data["dashboard"]["sources"]["demo-phd-mentorship-2026"]
-    assert dash["kpis"]["records"] == 148
+    src = next(s for s in data["catalog"]["sources"] if s["id"] == "demo-phd-mentorship-2026")
+    sil = src["layers"]["silver"]
+    # 148 rows read, 3 resubmissions superseded (latest wins), rows without privacy consent fail and stay out of gold.
+    assert sil["rows_read"] == 148 and sil["duplicates_superseded"] == 3 and sil["current"] == 145
+    assert sil["dq"]["fail"] > 0
+    assert dash["kpis"]["records"] == sil["current"] - sil["dq"]["fail"] == src["layers"]["gold"]
     charted = {c["column"] for c in dash["charts"]}
     assert "email_address" not in charted and "require_special_assistance_or_accommodation" not in charted
     for chart in dash["charts"]:
@@ -140,7 +145,8 @@ def test_build_publishes_only_aggregates(tmp_path):
             assert value["count"] is None or value["count"] >= 5
 
     assert data["jobs"]["runs"][0]["status"] == "partial"
-    assert [t["key"] for t in data["jobs"]["runs"][0]["tasks"]] == ["discover", "validate", "ingest", "govern", "publish"]
+    assert [t["key"] for t in data["jobs"]["runs"][0]["tasks"]] == ["discover", "validate", "bronze", "silver", "gold",
+                                                                      "store", "govern", "export", "publish"]
 
 
 def test_run_history_accumulates_and_single_source_refresh_keeps_others(tmp_path):
@@ -196,7 +202,10 @@ def test_day_first_timestamps_and_multi_select_and_partial_load(tmp_path):
     assert [p["date"] for p in dash["timeline"]] == ["2026-07-01", "2026-07-02", "2026-07-03"]
     regions = next(c for c in dash["charts"] if c["column"] == "which_regions_are_you_interested_in_studying_in")
     assert regions["multi"]
-    assert {v["value"]: v["count"] for v in regions["values"]} == {"Europe": 148, "Asia Pacific": 74}
+    counts = {v["value"]: v["count"] for v in regions["values"]}
+    assert set(counts) == {"Europe", "Asia Pacific"}
+    # Everyone picked Europe, every other row also picked Asia Pacific: per-option counts, not combinations.
+    assert counts["Europe"] == dash["kpis"]["records"] and 0.4 < counts["Asia Pacific"] / counts["Europe"] < 0.6
     assert "duplicate_submissions" not in dash["kpis"]
     catalog = unseal(json.loads((tmp_path / "out" / "catalog.json").read_text()), PIN)
     cols = {c["name"]: c["completeness"] for c in catalog["sources"][0]["columns"]}
@@ -245,3 +254,101 @@ def test_knowledge_base_is_built_from_published_aggregates_only(tmp_path):
     for leaked in ("applicant1@example.com", "Demo Applicant", "+62 812"):
         assert leaked not in text
     assert all(p["id"] and p["text"] and p["link"].startswith("#/") for p in kb["passages"])
+
+
+def _build_into(fixtures: Path, out: Path, lake: Path, previous: Path | None = None):
+    env = {**os.environ, "SITE_PIN": PIN}
+    if previous:
+        env["PREVIOUS_DIR"] = str(previous)
+    return subprocess.run(
+        [sys.executable, str(ROOT / "pipeline" / "build.py"), "--fixtures", str(fixtures), "--out", str(out),
+         "--warehouse", str(out / "w.duckdb"), "--lakehouse", str(lake)],
+        env=env, capture_output=True, text=True,
+    )
+
+
+def test_lakehouse_layers_scd2_quality_rules_and_outputs(tmp_path):
+    import duckdb
+
+    fx, lake = tmp_path / "fx", tmp_path / "lake"
+    fx.mkdir()
+    sheet = copy.deepcopy(DEMO)
+    sheet["tabs"]["QUALITY_RULES"] = [
+        ["column_name", "rule", "parameter", "severity", "description"],
+        ["prior_research_experience", "allowed_values", "Yes|No", "error", "Only Yes or No"],
+        ["nope", "not_null", "", "warn", ""],
+    ]
+    (fx / "sheet.json").write_text(json.dumps(sheet))
+    first = _build_into(fx, tmp_path / "out1", lake)
+    assert first.returncode == 0, first.stderr
+
+    # Second load: one applicant edits an answer, one row disappears, one new applicant arrives.
+    rows = sheet["tabs"]["DATA"]
+    rows[5][36] = "No" if rows[5][36] == "Yes" else "Yes"
+    removed_email = rows[10][1]
+    del rows[10]
+    new = list(rows[1])
+    new[0], new[1] = "28/07/2026 09:00:00", "brand.new@example.com"
+    rows.append(new)
+    (fx / "sheet.json").write_text(json.dumps(sheet))
+    second = _build_into(fx, tmp_path / "out2", lake, previous=tmp_path / "out1")
+    assert second.returncode == 0, second.stderr
+
+    run = unseal(json.loads((tmp_path / "out2" / "jobs.json").read_text()), PIN)["runs"][0]
+    table = next(iter(run["layers"]["silver"]))
+    sil, bro = run["layers"]["silver"][table], run["layers"]["bronze"][table]
+    assert (sil["inserted"], sil["updated"], sil["deleted"]) == (1, 1, 1)
+    assert bro["snapshots"] == 2 and bro["total_rows"] == 148 + 148
+    rule_ids = {r["id"]: r for r in sil["rules"]}
+    assert "prior_research_experience:allowed_values(Yes|No)" in rule_ids
+    assert rule_ids["prior_research_experience:allowed_values(Yes|No)"]["origin"] == "sheet"
+    catalog = unseal(json.loads((tmp_path / "out2" / "catalog.json").read_text()), PIN)
+    assert any("unknown column 'nope'" in w for w in catalog["sources"][0]["warnings"])
+
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE s AS SELECT * FROM read_parquet('{lake}/lakehouse/silver/{table}.parquet')")
+    removed = con.execute("SELECT is_current, is_deleted, valid_to IS NOT NULL FROM s WHERE record_key = ?",
+                          [removed_email.lower()]).fetchall()
+    assert removed == [(False, True, True)]
+    versions = con.execute("SELECT count(*) FROM s GROUP BY record_key HAVING count(*) > 1").fetchall()
+    assert len(versions) == 1  # the edited applicant has two versions
+    assert con.execute("SELECT count(*) FROM s WHERE is_current AND is_deleted").fetchone()[0] == 0
+
+    sheets = {p.stem: json.loads(p.read_text()) for p in (lake / "sheets" / "outputs").glob("*.json")}
+    assert "CONSOLIDATED" in sheets
+    per_source = next(v for k, v in sheets.items() if k.endswith("silver"))
+    assert set(per_source["tabs"]) == {"CURRENT", "HISTORY", "DQ_ISSUES", "ABOUT"}
+    assert len(per_source["tabs"]["HISTORY"]["rows"]) == len(per_source["tabs"]["CURRENT"]["rows"]) + 2
+    consolidated = sheets["CONSOLIDATED"]["tabs"]["ALL_DATA"]
+    assert consolidated["header"][0] == "source_table"
+    assert len(consolidated["rows"]) == sil["current"]
+
+
+def _query(lake: Path, sql: str, *extra):
+    return subprocess.run([sys.executable, str(ROOT / "pipeline" / "query.py"), "--lakehouse", str(lake), "--sql", sql, *extra],
+                          env={k: v for k, v in os.environ.items() if k != "GOOGLE_SERVICE_ACCOUNT_JSON"},
+                          capture_output=True, text=True)
+
+
+def test_query_previews_are_read_only_and_expire(tmp_path):
+    lake = tmp_path / "lake"
+    assert _build_into(ROOT / "tests" / "fixtures", tmp_path / "out", lake).returncode == 0
+    ok = _query(lake, "SELECT source_table, count(*) AS n FROM gold.consolidated GROUP BY 1", "--label", "count")
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    previews = list((lake / "sheets" / "previews").glob("*.json"))
+    assert len(previews) == 1
+    result = json.loads(previews[0].read_text())["tabs"]["RESULT"]
+    assert result["header"] == ["source_table", "n"] and result["rows"][0][1] > 0
+
+    for bad in ("DELETE FROM silver.x", "SELECT 1; SELECT 2", "COPY (SELECT 1) TO 'x.csv'",
+                "SELECT * FROM read_csv('/etc/passwd')"):
+        res = _query(lake, bad)
+        assert res.returncode == 1, bad
+        assert "Query failed" in res.stdout
+
+    # Age the preview past the retention window: the next run deletes it.
+    data = json.loads(previews[0].read_text())
+    data["created"] = "2000-01-01T00:00:00+00:00"
+    previews[0].write_text(json.dumps(data))
+    cleaned = _query(lake, "", "--cleanup-only")
+    assert cleaned.returncode == 0 and not previews[0].exists()

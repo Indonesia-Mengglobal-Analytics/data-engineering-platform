@@ -7,6 +7,7 @@
 github:
   repository: Indonesia-Mengglobal-Analytics/data-engineering-platform
   workflow_file: pipeline.yml
+  query_workflow_file: query.yml
 
 sources:
   # Every Google Sheet in this Drive folder is discovered on each run. Share the
@@ -17,6 +18,39 @@ sources:
     - 1LpvKvoXsVdYsUqtYHXK1GEubUw9uykE1RTIs2bHJaLI  # Mentee_Data_PhD_Mentorship_2026
     - 1hUpoba7UJ0qQgX10GWsYlNewfVILi44YgULhLHSM-wc
     - 1a2FvVl2QpeCat886BT4h5dKVjNk6UVNp0IvZveWsLPs
+
+# Lakehouse storage and spreadsheet outputs. Create a Shared Drive folder, add the service account
+# as Content manager, and put the folder ID here. Left empty, the lakehouse lives only inside each run
+# (no history between runs, no spreadsheet outputs).
+storage:
+  shared_drive_folder_id: ""
+  bronze_retention_days: 30
+
+outputs:
+  # Query previews (previews/ folder) are deleted this long after they are created.
+  preview_retention_hours: 2
+  # Most rows a query preview may return.
+  preview_max_rows: 50000
+
+# Quality rules. Each sheet can add its own in an optional QUALITY_RULES tab with the columns
+# column_name, rule, parameter, severity (error|warn), description.
+# Rules: not_null, email, phone, url, date, timestamp, regex, allowed_values (a|b|c), min_length,
+# max_length, unique. "error" keeps the row out of gold and the dashboard; "warn" only reports it.
+quality:
+  rules_tab: QUALITY_RULES
+  # Columns that identify one record across submissions (SCD key); the latest submission wins.
+  record_key: [email_address]
+  # Lower-cased in silver.
+  lowercase: "email"
+  standard:
+    - {match: "^timestamp$", rule: not_null, severity: error, description: "Every response has a submission time"}
+    - {match: "^timestamp$", rule: timestamp, severity: error, description: "Submission time is readable"}
+    - {match: "email", rule: not_null, severity: error, description: "A record needs an email to be identified"}
+    - {match: "email", rule: email, severity: warn}
+    - {match: "phone|whatsapp", rule: phone, severity: warn}
+    - {match: "url|link", rule: url, severity: warn}
+    - {match: "date_of_birth", rule: date, severity: warn}
+    - {match: "consent", rule: not_null, severity: error, description: "No consent, no processing"}
 
 # The format a sheet must follow to be registered (see README "Source format").
 contract:

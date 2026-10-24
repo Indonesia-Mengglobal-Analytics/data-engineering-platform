@@ -121,6 +121,36 @@ def build(catalog: dict, dashboard: dict, governance: dict, jobs: dict, contract
                    if c.get("multi") else "")
                 + f": {_values(c['values'])}.", f"#/dashboards/{sid}", sid)
 
+    lh = catalog.get("lakehouse") or {}
+    add("platform", "Lakehouse layers: bronze, silver, gold and SCD",
+        "Every registered sheet flows through three layers in DuckDB, saved as Parquet in the Shared Drive "
+        f"({'configured' if lh.get('storage') == 'drive' else 'not configured yet, so history does not survive between runs'}). "
+        f"Bronze keeps every run's snapshot exactly as read for {lh.get('bronze_retention_days', 30)} days. Silver cleans the "
+        "values (trims spaces, lower-cases emails, parses the timestamp), runs the quality rules, and keeps one version per "
+        f"record and change as SCD type 2 (record_key from {', '.join(lh.get('record_key') or ['row hash'])}; valid_from, "
+        "valid_to, is_current, is_deleted). The latest submission of a record wins. Gold holds current records that passed every "
+        "error-level rule and feeds the dashboard; gold.consolidated stacks every source; gold.dq_issues lists rule failures "
+        "without the values.", "#/catalog")
+    add("platform", "Previewing rows and running SQL",
+        "Rows are never shown on this site. Full previews are Google Sheets in the Shared Drive: one per source (tabs CURRENT, "
+        "HISTORY, DQ_ISSUES, ABOUT) plus CONSOLIDATED (ALL_DATA, DQ_ISSUES, SUMMARY), rewritten on every run. The SQL Editor "
+        "runs one read-only DuckDB SELECT over bronze, silver and gold in GitHub Actions and writes the result to a sheet in "
+        f"previews/, deleted after {lh.get('preview_retention_hours', 2)} hours. Only people with write access to the "
+        "repository can run queries.", "#/sql")
+    for s in catalog.get("sources", []):
+        if s.get("status") != "registered" or not s.get("layers"):
+            continue
+        sv, b = s["layers"].get("silver") or {}, s["layers"].get("bronze") or {}
+        dq = sv.get("dq", {})
+        add("quality", f"{s['title']}: layers and quality rules",
+            f"Latest run for '{s['title']}': bronze appended {b.get('appended')} rows ({b.get('total_rows')} kept across "
+            f"{b.get('snapshots')} snapshots). Silver: {sv.get('inserted')} inserted, {sv.get('updated')} updated, "
+            f"{sv.get('deleted')} deleted, {sv.get('unchanged')} unchanged; {sv.get('duplicates_superseded')} resubmissions "
+            f"merged; {sv.get('current')} current records; quality {dq.get('pass')} pass, {dq.get('warn')} warn, "
+            f"{dq.get('fail')} fail. Gold: {s['layers'].get('gold')} records. Rules: "
+            + "; ".join(f"{r['id']} ({r['severity']}, {r['origin']}): {r['failed']} of {r['checked']} failed"
+                        for r in s.get("quality_rules", [])) + ".", "#/quality", s["id"])
+
     runs = jobs.get("runs", [])
     if runs:
         last = runs[0]

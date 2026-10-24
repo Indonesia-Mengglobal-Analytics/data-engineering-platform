@@ -7,10 +7,25 @@
   const TASKS = [
     { key: "discover", desc: "List sheets in the Drive folder and config" },
     { key: "validate", desc: "Check the DATA / COLUMN_METADATA / TABLE_METADATA format" },
-    { key: "ingest", desc: "Load registered sheets into DuckDB raw.*" },
-    { key: "govern", desc: "Classify columns, build curated.* without PII" },
+    { key: "bronze", desc: "Append this run's snapshot, as read, to bronze.*" },
+    { key: "silver", desc: "Clean, run quality rules, SCD2 versions in silver.*" },
+    { key: "gold", desc: "Current records that passed: gold.*, consolidated, dq_issues" },
+    { key: "store", desc: "Save the lakehouse as Parquet in the Shared Drive" },
+    { key: "govern", desc: "Classify columns, curated views without PII" },
+    { key: "export", desc: "Write per-source and CONSOLIDATED sheets" },
     { key: "publish", desc: "Aggregate, encrypt, deploy to Pages" },
   ];
+  const META_COLS = {
+    bronze: [["_row", "Row number in the sheet"], ["_run_id", "Pipeline run that read it"], ["_ingested_at", "When it was read"],
+      ["_source_id", "Spreadsheet ID"], ["_row_hash", "Fingerprint of the row as read"]],
+    silver: [["record_key", "Identifies a record across submissions (SCD key)"], ["row_hash", "Fingerprint of the cleaned values"],
+      ["submitted_at", "Parsed form timestamp"], ["dq_status", "pass, warn or fail on the quality rules"], ["dq_issues", "What failed, without the values"],
+      ["valid_from", "This version is valid from (SCD2)"], ["valid_to", "Replaced or deleted at (SCD2)"], ["is_current", "The current version"],
+      ["is_deleted", "The record disappeared from the sheet"], ["_run_id", "Run that wrote this version"]],
+    gold: [["record_key", "Identifies the record"], ["row_hash", "Fingerprint of the cleaned values"], ["submitted_at", "Parsed form timestamp"],
+      ["dq_status", "pass or warn (fail rows are not in gold)"], ["dq_issues", "Warnings, without the values"], ["valid_from", "Current since"],
+      ["is_current", "Always true in gold"], ["_run_id", "Run that wrote this version"]],
+  };
   const CLASS_INFO = {
     personal: "Identifies a person. Never published, not even as counts.",
     sensitive: "Special-category data (health, disability, relationships). Never published.",
@@ -111,6 +126,8 @@
     schema: '<path d="M2 4.5h5l1 1.5h6V13H2z" fill="none" stroke="currentColor" stroke-width="1.2"/>',
     sheet: '<rect x="3" y="2" width="10" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3 6h10M3 9.5h10M7 6v8" stroke="currentColor" stroke-width="1.2"/>',
     play: '<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>',
+    code: '<path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5l3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4"/>',
+    check: '<path d="m3 8.5 3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.5"/>',
     spark: '<path d="M8 1.5 9.4 6.6 14.5 8 9.4 9.4 8 14.5 6.6 9.4 1.5 8 6.6 6.6z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
     filter: '<path d="M2 3.5h12l-4.5 5.2V13l-3-1.5V8.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
     ext: '<path d="M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5" fill="none" stroke="currentColor" stroke-width="1.3"/>',
@@ -195,7 +212,7 @@
     if (!D) return;
     const parts = location.hash.split("?")[0].replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
     const [page = "home", ...rest] = parts;
-    const pages = { home, catalog, jobs, runs: runsPage, ingestion, dashboards, governance, ask };
+    const pages = { home, catalog, jobs, runs: runsPage, ingestion, dashboards, governance, ask, quality: qualityPage, sql };
     const render = pages[page] || notFound;
     $$(".nav").forEach((a) => a.classList.toggle("active", a.dataset.route === (pages[page] ? page : "")));
     $("#content").innerHTML = render(...rest);
@@ -218,6 +235,8 @@
     if (pick) pick.addEventListener("change", () => (location.hash = `#/dashboards/${encodeURIComponent(pick.value)}`));
     const dash = $("#dash");
     if (dash) mountDashboard(dash);
+    const sqlEl = $("#sqlpage");
+    if (sqlEl) mountSql(sqlEl);
     const askEl = $("#ask");
     if (askEl) mountAsk(askEl);
   }
@@ -252,46 +271,84 @@
       </div>`;
   }
 
-  // Catalog explorer: catalog "sheets" > schemas raw / curated > tables
+  // Catalog explorer: catalog "sheets" > schemas bronze / silver / gold > tables
+  const LAYER_INFO = {
+    bronze: "Every run's snapshot of the sheet exactly as read, kept for the retention period. Append-only.",
+    silver: "Cleaned and quality-checked; one version per record and change (SCD type 2).",
+    gold: "Current records that passed every error-level rule. Feeds the dashboard and exports.",
+  };
+  const lake = () => D.catalog.lakehouse || {};
+  const outputFor = (s) => (lake().outputs || []).find((o) => o.name === `${s.title} · silver`);
+  const sqlLink = (q) => `#/sql?q=${encodeURIComponent(q)}`;
+
   function catalog(table, tab = "overview", schema) {
     const regs = registered();
+    const layerOf = schema === "bronze" || schema === "silver" ? schema : "gold";
+    const extra = lake().tables?.length ? [["consolidated", "All sources stacked, current records, with source_table"], ["dq_issues", "Every rule failure in the latest snapshot"]] : [];
+    const node = (sc, name, active) => `<li data-name="${esc(name.toLowerCase())}"><a href="#/catalog/${esc(name)}/overview/${sc}" class="${active ? "active" : ""}">${icon(sc === "gold" ? "table" : sc === "silver" ? "view" : "schema")} ${esc(name)}</a></li>`;
     const tree = `<div class="tree"><input class="tree-filter" id="tree-filter" placeholder="Type to filter" aria-label="Filter tables">
       <ul><li><span class="node">${icon("catalog")} <b>sheets</b></span><ul>
-        ${["raw", "curated"].map((sc) => `<li><span class="node">${icon("schema")} ${sc}</span><ul>
-          ${regs.map((s) => `<li data-name="${esc(tableName(s).toLowerCase())}"><a href="#/catalog/${esc(tableName(s))}/overview/${sc}" class="${table === tableName(s) && (schema || "raw") === sc ? "active" : ""}">${icon(sc === "raw" ? "table" : "view")} ${esc(tableName(s))}</a></li>`).join("") || `<li class="muted small node">empty</li>`}
+        ${["bronze", "silver", "gold"].map((sc) => `<li><span class="node layer-${sc}">${icon("schema")} ${sc}</span><ul>
+          ${regs.map((x) => node(sc, tableName(x), table === tableName(x) && layerOf === sc)).join("")}
+          ${sc === "gold" ? extra.map(([n]) => node("gold", n, table === n)).join("") : ""}
+          ${!regs.length ? `<li class="muted small node">empty</li>` : ""}
         </ul></li>`).join("")}
       </ul></li></ul></div>`;
     let main;
     const s = table && sourceByTable(table);
     if (!table) {
-      main = head("Catalog", "Every registered Google Sheet becomes a table in <code>sheets.raw</code> and a governed view in <code>sheets.curated</code>.") +
-        `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Owner</th><th class="num">Rows</th><th class="num">Columns</th><th>Updated</th></tr></thead><tbody>
-        ${regs.map((x) => `<tr><td>${icon("table")} <a href="#/catalog/${esc(tableName(x))}">${esc(x.fqn)}</a></td><td>Table</td><td>${esc(x.table.owner_email)}</td><td class="num">${fmtInt(x.rows)}</td><td class="num">${x.columns.length}</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>
-          <tr><td>${icon("view")} <a href="#/catalog/${esc(tableName(x))}/overview/curated">${esc(x.curated_fqn)}</a></td><td>View</td><td>${esc(x.table.owner_email)}</td><td class="num">${fmtInt(x.rows)}</td><td class="num">${x.columns.filter((c) => c.published).length}</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No tables yet. Register a sheet under Data Ingestion.</td></tr>`}
+      const L = lake();
+      main = head("Catalog", "Every registered sheet flows through three layers. Click a table to see its columns, metrics, lineage and quality.") +
+        `<div class="medallion">${["bronze", "silver", "gold"].map((sc, i) => `${i ? '<div class="dag-edge"></div>' : ""}<div class="layer-card layer-${sc}"><div class="k">${sc}</div><div class="d">${esc(LAYER_INFO[sc])}</div></div>`).join("")}</div>
+        <p class="muted small">Storage: ${L.storage === "drive" ? `Shared Drive${L.link ? ` · <a href="${esc(L.link)}" target="_blank" rel="noopener">open lakehouse folder</a>` : ""}` : "this run only (no Shared Drive configured: no history between runs)"} · bronze kept ${esc(L.bronze_retention_days ?? "–")} days · record key ${esc((L.record_key || []).join(", ") || "–")}</p>
+        <div class="table-wrap"><table><thead><tr><th>Table</th><th>Layer</th><th class="num">Rows</th><th>Notes</th><th>Updated</th></tr></thead><tbody>
+        ${regs.map((x) => { const l = x.layers || {}; return `
+          <tr><td>${icon("schema")} <a href="#/catalog/${esc(tableName(x))}/overview/bronze">sheets.bronze.${esc(tableName(x))}</a></td><td>${layerBadge("bronze")}</td><td class="num">${fmtInt(l.bronze?.total_rows)}</td><td class="muted">${fmtInt(l.bronze?.snapshots)} snapshots</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>
+          <tr><td>${icon("view")} <a href="#/catalog/${esc(tableName(x))}/overview/silver">sheets.silver.${esc(tableName(x))}</a></td><td>${layerBadge("silver")}</td><td class="num">${fmtInt(l.silver?.versions_total)}</td><td class="muted">${fmtInt(l.silver?.current)} current · ${fmtInt(l.silver?.dq?.fail)} failing</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>
+          <tr><td>${icon("table")} <a href="#/catalog/${esc(tableName(x))}/overview/gold">sheets.gold.${esc(tableName(x))}</a></td><td>${layerBadge("gold")}</td><td class="num">${fmtInt(l.gold ?? x.rows)}</td><td class="muted">published as aggregates</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>`; }).join("") || `<tr><td colspan="5" class="empty">No tables yet. Register a sheet under Data Ingestion.</td></tr>`}
+        ${extra.map(([n, d]) => `<tr><td>${icon("table")} <a href="#/catalog/${n}/overview/gold">sheets.gold.${n}</a></td><td>${layerBadge("gold")}</td><td class="num">${fmtInt(n === "consolidated" ? L.consolidated_rows : L.dq_issue_rows)}</td><td class="muted">${esc(d)}</td><td></td></tr>`).join("")}
         </tbody></table></div>`;
+    } else if (table === "consolidated" || table === "dq_issues") {
+      const L = lake();
+      const cons = L.outputs?.find((o) => o.name === "CONSOLIDATED");
+      main = head(table, table === "consolidated" ? "Current records of every source, stacked, with source_table, dq_status and the SCD columns." : "Every quality rule failure in the latest snapshot: source_table, record_key, column_name, rule, severity, message, sheet_row. Values are never copied.",
+        `<a class="btn" href="${sqlLink(`SELECT * FROM gold.${table} LIMIT 200`)}">${icon("play", 12)} Query</a>${cons?.url ? ` <a class="btn" href="${esc(cons.url)}" target="_blank" rel="noopener">${icon("sheet")} Open CONSOLIDATED sheet</a>` : ""}`,
+        [["sheets", "#/catalog"], ["gold", "#/catalog"], [table, null]]) +
+        `<div class="grid grid-4"><div class="card stat"><div class="label">Rows</div><div class="value">${fmtInt(table === "consolidated" ? L.consolidated_rows : L.dq_issue_rows)}</div></div>
+        <div class="card stat"><div class="label">Sources</div><div class="value">${fmtInt(L.tables?.length)}</div></div></div>`;
     } else if (!s) {
       main = `<div class="empty">Table <code>${esc(table)}</code> not found.</div>`;
     } else {
-      const sc = schema === "curated" ? "curated" : "raw";
-      const cols = sc === "curated" ? s.columns.filter((c) => c.published) : s.columns;
+      const sc = layerOf, l = s.layers || {};
+      const cols = sc === "gold" ? s.columns : s.columns;
       const base = `#/catalog/${esc(table)}`;
-      const tabs = [["overview", "Overview"], ["sample", "Sample Data"], ["details", "Details"], ["permissions", "Permissions"], ["lineage", "Lineage"], ["quality", "Quality"]];
-      main = head(`${table}`, esc(s.table.table_description || ""), `<a class="btn" href="${esc(s.url)}" target="_blank" rel="noopener">${icon("sheet")} Open sheet</a> ${runBtn(s.id)}`,
+      const out = outputFor(s);
+      const tabs = [["overview", "Columns"], ["layer", "Layer metrics"], ["sample", "Sample Data"], ["quality", "Quality"], ["lineage", "Lineage"], ["details", "Details"], ["permissions", "Permissions"]];
+      main = head(`${table}`, esc(s.table.table_description || ""),
+        `<a class="btn" href="${sqlLink(`SELECT * FROM ${sc}.${table}${sc === "silver" ? " WHERE is_current" : ""} LIMIT 200`)}">${icon("play", 12)} Query</a> <a class="btn" href="${esc(s.url)}" target="_blank" rel="noopener">${icon("sheet")} Source sheet</a> ${runBtn(s.id)}`,
         [["sheets", "#/catalog"], [sc, "#/catalog"], [table, null]]) +
-        `<p style="margin:-8px 0 12px" class="muted small">${sc === "raw" ? "Table" : "View"} · Owner <b>${esc(s.table.owner_email)}</b> · ${fmtInt(s.rows)} rows · Version ${esc(s.table.version || "–")} · Refreshed ${esc(ago(s.ingested_at))}</p>
+        `<p style="margin:-8px 0 12px" class="muted small">${layerBadge(sc)} ${esc(LAYER_INFO[sc])} Owner <b>${esc(s.table.owner_email)}</b> · refreshed ${esc(ago(s.ingested_at))}</p>
         ${s.partial_load ? partialNote() : ""}
-        <nav class="tabs">${tabs.map(([k, l]) => `<a href="${base}/${k}/${sc}" class="${tab === k ? "active" : ""}">${l}</a>`).join("")}</nav>`;
+        <nav class="tabs">${tabs.map(([k, lbl]) => `<a href="${base}/${k}/${sc}" class="${tab === k ? "active" : ""}">${lbl}</a>`).join("")}</nav>`;
       if (tab === "overview") {
         main += `<div class="table-wrap"><table><thead><tr><th>#</th><th>Column</th><th>Type</th><th>Comment</th><th>Tags</th><th class="num">Filled</th></tr></thead><tbody>
-          ${cols.map((c) => `<tr><td class="muted">${esc(c.location)}</td><td class="mono">${esc(c.name)}</td><td class="mono muted">string</td><td>${esc(c.description)}<div class="muted small">Form: ${esc(c.form_question.slice(0, 120))}${c.form_question.length > 120 ? "…" : ""}</div></td><td>${tag(c.class)}${c.published ? "" : ' <span class="tag tag-personal">withheld</span>'}</td><td class="num">${pct(c.completeness)}</td></tr>`).join("")}
+          ${cols.map((c) => `<tr><td class="muted">${esc(c.location)}</td><td class="mono">${esc(c.name)}</td><td class="mono muted">string</td><td>${esc(c.description)}<div class="muted small">Form: ${esc(c.form_question.slice(0, 120))}${c.form_question.length > 120 ? "…" : ""}</div></td><td>${tag(c.class)}${c.published ? "" : ' <span class="tag tag-personal">not on site</span>'}</td><td class="num">${pct(c.completeness)}</td></tr>`).join("")}
+          ${META_COLS[sc].map(([n, d]) => `<tr class="meta-row"><td class="muted">–</td><td class="mono">${esc(n)}</td><td class="mono muted">${/_at$|valid_/.test(n) ? "timestamp" : /^is_/.test(n) ? "boolean" : n === "_row" ? "bigint" : "string"}</td><td>${esc(d)}</td><td><span class="tag">pipeline</span></td><td></td></tr>`).join("")}
           </tbody></table></div>`;
+      } else if (tab === "layer") {
+        main += layerPanel(table, l);
       } else if (tab === "sample") {
-        main += `<div class="callout warn"><b>Sample data is not published.</b> This site is public and static, so rows never leave the pipeline run. Open the source sheet to see records (needs Google access), or see aggregated values on the <a href="#/dashboards/${esc(s.id)}">dashboard</a>.</div>`;
+        main += `<div class="callout"><b>Rows are previewed in Google Sheets, never on this site.</b> Google Drive decides who can open them.</div>
+          <div class="grid grid-2">
+            <div class="card"><h3>Full preview</h3><p class="muted">Tabs CURRENT, HISTORY (every SCD version), DQ_ISSUES and ABOUT, rewritten every run.</p>
+              ${out?.url ? `<a class="btn btn-primary" href="${esc(out.url)}" target="_blank" rel="noopener">${icon("sheet")} Open “${esc(out.name)}”</a>` : `<p class="muted small">${lake().storage === "drive" ? "Not written yet." : "Needs a Shared Drive (storage.shared_drive_folder_id)."}</p>`}</div>
+            <div class="card"><h3>Ask a question in SQL</h3><p class="muted">The result lands in a preview sheet that is deleted after ${esc(lake().preview_retention_hours ?? 2)} hours.</p>
+              <a class="btn" href="${sqlLink(`SELECT * FROM ${sc}.${table}${sc === "silver" ? " WHERE is_current" : ""} LIMIT 200`)}">${icon("play", 12)} Open in SQL editor</a></div></div>`;
       } else if (tab === "details") {
         const t = s.table;
         const d = (v) => (v && /^\d{8}$/.test(v) ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6)}` : v || "–");
         main += `<div class="grid grid-2"><div class="card"><h3>About this table</h3><dl class="kv">
-          <dt>Full name</dt><dd class="mono">${esc(sc === "raw" ? s.fqn : s.curated_fqn)}</dd>
+          <dt>Full name</dt><dd class="mono">sheets.${esc(sc)}.${esc(table)}</dd>
           <dt>Description</dt><dd>${esc(t.table_description)}</dd><dt>Purpose</dt><dd>${esc(t.purpose)}</dd>
           <dt>Owner</dt><dd>${esc(t.owner_email)}</dd><dt>Operation period</dt><dd>${esc(d(t.operation_date_start))} → ${esc(d(t.operation_date_end))}</dd>
           <dt>Populated</dt><dd>${esc(d(t.populated_date))}</dd><dt>Version</dt><dd>${esc(t.version)}</dd></dl></div>
@@ -301,26 +358,184 @@
           <dt>Warnings</dt><dd>${s.warnings.length ? s.warnings.map(esc).join("<br>") : "None"}</dd></dl></div></div>`;
       } else if (tab === "permissions") {
         const g = D.governance.sources.find((x) => x.id === s.id);
-        main += `<div class="callout">Access is enforced in three places: the Google Sheet's own sharing, the service account the pipeline reads with, and the PIN that encrypts this site.</div>
+        main += `<div class="callout">Access is enforced by Google (the source sheet, the Shared Drive with the lakehouse and outputs), by GitHub (who can run the pipeline and queries), and by the PIN that encrypts this site.</div>
           <div class="table-wrap"><table><thead><tr><th>Principal</th><th>Privilege</th><th>Scope</th></tr></thead><tbody>
           <tr><td>${esc(s.table.owner_email)}</td><td>OWNER</td><td>Source sheet</td></tr>
           <tr><td>Pipeline service account</td><td>READ</td><td>Source sheet (Viewer)</td></tr>
+          <tr><td>Pipeline service account</td><td>WRITE</td><td>Shared Drive: lakehouse/, outputs/, previews/ (Content manager)</td></tr>
+          <tr><td>Shared Drive members</td><td>SELECT (all rows)</td><td>Output and preview sheets; previews deleted after ${esc(lake().preview_retention_hours ?? 2)} h</td></tr>
+          <tr><td>Repository writers</td><td>RUN</td><td>Pipeline and SQL queries (GitHub Actions)</td></tr>
           <tr><td>Site PIN holders</td><td>SELECT (aggregates only)</td><td>${esc(s.curated_fqn)}, ${g ? g.withheld.length : 0} columns withheld</td></tr>
           <tr><td>Public internet</td><td>None</td><td>Encrypted files only</td></tr></tbody></table></div>`;
       } else if (tab === "lineage") {
-        main += `<div class="dag">${[["sheet", s.title, "Google Sheet"], ["table", s.fqn, "DuckDB table"], ["view", s.curated_fqn, "Governed view"], ["dashboard", "Dashboard", "Aggregates on Pages"]]
+        main += `<div class="dag">${[["sheet", s.title, "Google Sheet"], ["schema", `bronze.${table}`, `${fmtInt(l.bronze?.snapshots)} snapshots`], ["view", `silver.${table}`, `${fmtInt(l.silver?.versions_total)} versions · SCD2`], ["table", `gold.${table}`, `${fmtInt(l.gold ?? s.rows)} records`], ["dashboard", "Dashboard + Ask", "aggregates on Pages"], ["sheet", "Output sheets", "per source + CONSOLIDATED"]]
           .map(([i, k, d], n) => `${n ? '<div class="dag-edge"></div>' : ""}<div class="dag-node"><div class="k">${icon(i)} <span style="overflow:hidden;text-overflow:ellipsis">${esc(k)}</span></div><div class="d">${esc(d)}</div></div>`).join("")}</div>`;
       } else if (tab === "quality") {
-        const q = (D.dashboard.sources[s.id] || {}).quality || [];
-        const low = s.columns.filter((c) => c.completeness != null && c.completeness < 0.5);
-        main += `<div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Check</th><th>Result</th><th>Status</th></tr></thead><tbody>
-          <tr><td>Format contract (tabs, dictionary, header match)</td><td>Passed</td><td>${badge("ok", "Pass")}</td></tr>
-          ${q.map((x) => `<tr><td>${esc(x.check)}</td><td>${esc(x.value)}</td><td>${badge(x.status, { ok: "Pass", warn: "Warning", fail: "Fail" }[x.status])}</td></tr>`).join("")}
-          <tr><td>Columns under 50% filled</td><td>${low.length ? low.map((c) => `<code>${esc(c.name)}</code>`).join(", ") : "None"}</td><td>${badge(low.length ? "warn" : "ok", low.length ? "Warning" : "Pass")}</td></tr>
-          </tbody></table></div>`;
+        main += qualityTable(s);
       }
     }
     return `<div class="explorer">${tree}<div class="explorer-main">${main}</div></div>`;
+  }
+
+  const layerBadge = (sc) => `<span class="layer-pill layer-${sc}">${sc}</span>`;
+
+  function layerPanel(table, l) {
+    const b = l.bronze || {}, sv = l.silver || {};
+    const stat = (label, v, sub = "") => `<div class="card stat"><div class="label">${label}</div><div class="value">${fmtInt(v)}</div>${sub ? `<div class="muted small">${sub}</div>` : ""}</div>`;
+    return `<h3 class="section-title">${layerBadge("bronze")} Bronze · this run</h3><div class="grid grid-4">
+        ${stat("Rows appended", b.appended)}${stat("Rows kept", b.total_rows, `${fmtInt(b.snapshots)} snapshots · ${fmtInt(b.retention_days)} days`)}${stat("Pruned", b.pruned, "older than retention")}${stat("Columns", b.columns)}</div>
+      <h3 class="section-title">${layerBadge("silver")} Silver · SCD type 2</h3><div class="grid grid-4">
+        ${stat("Inserted", sv.inserted, "new records")}${stat("Updated", sv.updated, "new version, old one closed")}${stat("Deleted", sv.deleted, "closed, is_deleted")}${stat("Unchanged", sv.unchanged)}
+        ${stat("Current records", sv.current)}${stat("Versions kept", sv.versions_total)}${stat("Resubmissions merged", sv.duplicates_superseded, `latest wins · key ${esc((sv.record_key || []).join(", "))}`)}
+        <div class="card stat"><div class="label">Quality</div><div class="dq-split">${badge("ok", `${fmtInt(sv.dq?.pass)} pass`)} ${badge("warn", `${fmtInt(sv.dq?.warn)} warn`)} ${badge("fail", `${fmtInt(sv.dq?.fail)} fail`)}</div></div></div>
+      <h3 class="section-title">${layerBadge("gold")} Gold</h3><div class="grid grid-4">${stat("Records", l.gold, "current, passed error rules")}</div>`;
+  }
+
+  function qualityTable(s) {
+    const rules = s.quality_rules || [];
+    if (!rules.length) return `<div class="empty">No quality rules ran on this source yet.</div>`;
+    return `<div class="table-wrap"><table><thead><tr><th>Rule</th><th>Column</th><th>Severity</th><th>Origin</th><th class="num">Checked</th><th class="num">Failed</th><th style="width:22%">Pass rate</th></tr></thead><tbody>
+      ${rules.map((r) => { const rate = r.checked ? (r.checked - r.failed) / r.checked : 1; return `<tr>
+        <td class="mono">${esc(r.rule)}${r.param ? `<span class="muted">(${esc(r.param)})</span>` : ""}${r.description ? `<div class="muted small" style="font-family:var(--font)">${esc(r.description)}</div>` : ""}</td>
+        <td class="mono">${esc(r.column)}</td><td>${badge(r.severity === "error" ? "fail" : "warn", r.severity)}</td><td>${r.origin === "sheet" ? '<span class="tag tag-categorical">QUALITY_RULES tab</span>' : '<span class="tag">standard</span>'}</td>
+        <td class="num">${fmtInt(r.checked)}</td><td class="num">${fmtInt(r.failed)}</td>
+        <td><span class="rate"><span style="width:${rate * 100}%;background:var(--${r.failed ? (r.severity === "error" ? "danger" : "warning") : "success"})"></span></span> <span class="muted small">${Math.round(rate * 1000) / 10}%</span></td></tr>`; }).join("")}
+      </tbody></table></div>`;
+  }
+
+  function qualityPage(id) {
+    const regs = registered();
+    const trend = runs().slice(0, 15).reverse();
+    return head("Data Quality", `Rules run in silver on every pipeline run. <b>error</b> keeps a row out of gold and the dashboard; <b>warn</b> only reports it. Add rules per sheet in a <code>${esc(lake().quality_rules_tab || "QUALITY_RULES")}</code> tab.`) +
+      regs.map((s) => {
+        const sv = s.layers?.silver || {};
+        const points = trend.map((r) => r.layers?.silver?.[tableName(s)]?.dq).filter(Boolean);
+        return `<div class="card" style="margin-bottom:16px"><div class="page-head" style="margin-bottom:8px"><div><h2>${esc(s.title)}</h2>
+          <p class="muted">${fmtInt(sv.current)} current records · ${badge("ok", `${fmtInt(sv.dq?.pass)} pass`)} ${badge("warn", `${fmtInt(sv.dq?.warn)} warn`)} ${badge("fail", `${fmtInt(sv.dq?.fail)} fail`)}</p></div>
+          <div>${points.length > 1 ? `<span class="muted small">fail trend</span> <span class="spark-inline">${points.map((p) => `<span style="height:${Math.max(8, Math.min(100, (100 * p.fail) / Math.max(1, p.pass + p.warn + p.fail) * 4))}%"></span>`).join("")}</span>` : ""}
+          <a class="btn btn-sm" href="${sqlLink(`SELECT column_name, rule, severity, count(*) AS rows FROM gold.dq_issues WHERE source_table = '${tableName(s)}' GROUP BY ALL ORDER BY rows DESC`)}">${icon("play", 10)} Query issues</a></div></div>
+          ${qualityTable(s)}</div>`;
+      }).join("") +
+      `<div class="card"><h3>Add a rule to a sheet</h3><p class="muted">Add a tab named <code>${esc(lake().quality_rules_tab || "QUALITY_RULES")}</code> with these columns. Rows that can't be used show as warnings on Data Ingestion.</p>
+        <div class="table-wrap"><table><thead><tr><th>column_name</th><th>rule</th><th>parameter</th><th>severity</th><th>description</th></tr></thead><tbody>
+        <tr><td class="mono">prior_research_experience</td><td class="mono">allowed_values</td><td class="mono">Yes|No</td><td>error</td><td>Only Yes or No</td></tr>
+        <tr><td class="mono">motivation_for_pursuing_phd</td><td class="mono">min_length</td><td class="mono">600</td><td>warn</td><td>The form asks for 600+ characters</td></tr>
+        <tr><td class="mono">whatsapp_phone_number</td><td class="mono">regex</td><td class="mono">^\\+62</td><td>warn</td><td>Indonesian numbers</td></tr>
+        </tbody></table></div>
+        <p class="muted small">Rules: not_null, email, phone, url, date, timestamp, regex, allowed_values (a|b|c), min_length, max_length, unique.</p></div>`;
+  }
+
+  // ---------- SQL editor ----------
+  const EXAMPLES = (t) => [
+    ["Current records", `SELECT * FROM silver.${t} WHERE is_current ORDER BY submitted_at DESC LIMIT 200`],
+    ["Change history (SCD2)", `SELECT record_key, valid_from, valid_to, is_current, is_deleted\nFROM silver.${t}\nWHERE record_key IN (SELECT record_key FROM silver.${t} GROUP BY 1 HAVING count(*) > 1)\nORDER BY record_key, valid_from`],
+    ["Rows that failed rules", `SELECT record_key, column_name, rule, severity, message, sheet_row\nFROM gold.dq_issues WHERE source_table = '${t}' AND severity = 'error'`],
+    ["Snapshots in bronze", `SELECT _run_id, min(_ingested_at) AS read_at, count(*) AS rows\nFROM bronze.${t} GROUP BY 1 ORDER BY read_at DESC`],
+    ["All sources", `SELECT source_table, dq_status, count(*) AS records\nFROM gold.consolidated GROUP BY ALL ORDER BY ALL`],
+  ];
+
+  function sql() {
+    return head("SQL Editor", `Read-only DuckDB SQL over bronze, silver and gold. Queries run in GitHub Actions; the result is written to a Google Sheet in the Shared Drive and deleted after ${esc(lake().preview_retention_hours ?? 2)} hours.`) + `<div id="sqlpage"></div>`;
+  }
+
+  function mountSql(el) {
+    const q = new URLSearchParams(location.hash.split("?")[1] || "").get("q");
+    const first = registered()[0];
+    const t = first ? tableName(first) : "my_table";
+    const token = store.get("im_gh_token");
+    const repo = D.jobs.workflow.repository, file = D.jobs.workflow.query_file || "query.yml";
+    const schema = registered().map((s) => `<details><summary>${icon("table")} ${esc(tableName(s))}</summary>
+        ${["bronze", "silver", "gold"].map((sc) => `<div class="schema-item" data-insert="${sc}.${esc(tableName(s))}">${layerBadge(sc)} ${sc}.${esc(tableName(s))}</div>`).join("")}
+        <div class="schema-cols">${s.columns.map((c) => `<span class="schema-item" data-insert="${esc(c.name)}">${esc(c.name)}</span>`).join("")}</div></details>`).join("")
+      + (lake().tables?.length ? `<details open><summary>${icon("table")} gold (shared)</summary><div class="schema-item" data-insert="gold.consolidated">${layerBadge("gold")} gold.consolidated</div><div class="schema-item" data-insert="gold.dq_issues">${layerBadge("gold")} gold.dq_issues</div></details>` : "");
+    el.innerHTML = `<div class="sql-layout">
+      <aside class="sql-schema card"><h3>Schema</h3>${schema || `<p class="muted">No tables yet.</p>`}<p class="muted small">Click a name to insert it.</p></aside>
+      <section class="sql-main">
+        <div class="card sql-card">
+          <div class="sql-examples">${EXAMPLES(t).map(([n, x], i) => `<button class="seg" data-example="${i}">${esc(n)}</button>`).join("")}</div>
+          <textarea id="sql-text" class="sql-text" spellcheck="false" aria-label="SQL">${esc(q || EXAMPLES(t)[0][1])}</textarea>
+          <div class="sql-bar"><input id="sql-label" class="sql-label" placeholder="Label for the preview sheet (optional)" maxlength="60">
+            <span class="fb-spacer"></span>
+            <button class="btn btn-sm" id="sql-token-btn" type="button">${token ? "GitHub token ✓" : "Add GitHub token"}</button>
+            <button class="btn btn-primary" id="sql-run">${icon("play", 12)} Run</button></div>
+          <div class="ask-key" id="sql-token" hidden>
+            <label for="sql-token-input"><b>GitHub token</b> <span class="muted small">fine-grained, this repository only, permission <code>Actions: Read and write</code>; kept in this tab only</span></label>
+            <div class="ask-key-row"><input id="sql-token-input" type="password" autocomplete="off" placeholder="github_pat_…"><button class="btn btn-primary btn-sm" id="sql-token-save" type="button">Save</button>${token ? `<button class="btn btn-sm" id="sql-token-clear" type="button">Remove</button>` : ""}</div>
+            <p class="muted small">Without a token, Run opens the workflow on GitHub with the SQL copied to your clipboard.</p></div>
+          <div id="sql-status"></div>
+        </div>
+        <div class="callout"><b>Where results go.</b> ${lake().previews_link ? `<a href="${esc(lake().previews_link)}" target="_blank" rel="noopener">previews/ folder in the Shared Drive</a>` : "The previews/ folder in the Shared Drive"}. Each sheet has a RESULT and a QUERY tab and is deleted after ${esc(lake().preview_retention_hours ?? 2)} hours. Only one SELECT per run; files and network are switched off while it runs.</div>
+        <div class="card"><div class="page-head" style="margin-bottom:8px"><h3>Recent queries</h3><button class="btn btn-sm" id="sql-refresh">Refresh</button></div><div id="sql-runs" class="muted small">Loading…</div></div>
+      </section></div>`;
+    const text = $("#sql-text");
+    el.addEventListener("click", async (e) => {
+      const ex = e.target.closest("[data-example]");
+      if (ex) { text.value = EXAMPLES(t)[Number(ex.dataset.example)][1]; text.focus(); }
+      const ins = e.target.closest("[data-insert]");
+      if (ins) { const at = text.selectionStart ?? text.value.length; text.value = text.value.slice(0, at) + ins.dataset.insert + text.value.slice(text.selectionEnd ?? at); text.focus(); }
+      if (e.target.closest("#sql-token-btn")) { $("#sql-token").hidden = !$("#sql-token").hidden; }
+      if (e.target.closest("#sql-token-save")) { const v = $("#sql-token-input").value.trim(); if (v) store.set("im_gh_token", v); route(); }
+      if (e.target.closest("#sql-token-clear")) { store.del("im_gh_token"); route(); }
+      if (e.target.closest("#sql-refresh")) loadQueryRuns(repo, file);
+      if (e.target.closest("#sql-run")) runSql(repo, file, text.value, $("#sql-label").value);
+    });
+    text.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); runSql(repo, file, text.value, $("#sql-label").value); } });
+    loadQueryRuns(repo, file);
+  }
+
+  function ghHeaders() {
+    const h = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+    const t = store.get("im_gh_token");
+    if (t) h.Authorization = `Bearer ${t}`;
+    return h;
+  }
+
+  async function runSql(repo, file, sqlText, label) {
+    const status = $("#sql-status");
+    const q = sqlText.trim();
+    if (!q) return;
+    if (!/^\s*(with|select|from)\b/i.test(q)) { status.innerHTML = `<div class="callout danger">Only SELECT queries can run (WITH … SELECT is fine).</div>`; return; }
+    const btn = $("#sql-run");
+    if (!store.get("im_gh_token")) {
+      try { await navigator.clipboard.writeText(q); } catch { /* clipboard blocked */ }
+      window.open(`https://github.com/${repo}/actions/workflows/${file}`, "_blank", "noopener");
+      status.innerHTML = `<div class="callout">SQL copied. On GitHub click <b>Run workflow</b>, paste it into <b>sql</b>, and run. The preview sheet appears in the previews/ folder in about a minute.</div>`;
+      return;
+    }
+    btn.disabled = true;
+    status.innerHTML = `<p class="muted">Starting…</p>`;
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${file}/dispatches`, {
+        method: "POST", headers: { ...ghHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: "main", inputs: { sql: q, label: label || "" } }),
+      });
+      if (res.status !== 204) throw new Error(res.status === 401 || res.status === 403 ? "GitHub refused the token (it needs Actions: Read and write on this repository)." : `GitHub answered ${res.status}.`);
+      status.innerHTML = `<div class="callout">${badge("running", "Queued")} The query is running in GitHub Actions. The preview sheet appears in the previews/ folder when it finishes (usually under a minute).</div>`;
+      setTimeout(() => loadQueryRuns(repo, file), 4000);
+      setTimeout(() => loadQueryRuns(repo, file), 30000);
+    } catch (err) {
+      status.innerHTML = `<div class="callout danger">${esc(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function loadQueryRuns(repo, file) {
+    const box = $("#sql-runs");
+    if (!box) return;
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${file}/runs?per_page=10&event=workflow_dispatch`, { headers: ghHeaders() });
+      if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+      const data = await res.json();
+      const rows = data.workflow_runs || [];
+      box.innerHTML = rows.length ? `<table><thead><tr><th>Started</th><th>Query</th><th>By</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((r) => {
+        const st = r.status !== "completed" ? "running" : r.conclusion === "success" ? "succeeded" : "failed";
+        return `<tr><td class="nowrap">${esc(when(r.run_started_at || r.created_at))}</td><td>${esc((r.display_title || "").replace(/^Query · /, ""))}</td><td>${esc(r.actor?.login || "")}</td><td>${badge(st, st === "running" ? cap(r.status.replace(/_/g, " ")) : st === "succeeded" ? "Ready" : "Failed")}</td>
+          <td><a href="${esc(r.html_url)}" target="_blank" rel="noopener">Summary ${icon("ext", 11)}</a></td></tr>`;
+      }).join("")}</tbody></table>` : "No queries yet.";
+    } catch (err) {
+      box.textContent = `Could not load recent queries (${err.message}).`;
+    }
   }
 
   function jobs(id, tab = "runs") {
@@ -390,7 +605,22 @@
       [["Job Runs", "#/runs"], [String(r.run_id), null]]) +
       (r.error ? `<div class="callout danger"><b>Run failed.</b> <code>${esc(r.error)}</code><br><span class="muted small">The site kept the last good data; only the run history changed.</span></div>` : "") +
       `<div class="dag" style="margin-bottom:16px">${(r.tasks || []).map((t, i) => `${i ? '<div class="dag-edge"></div>' : ""}<div class="dag-node"><div class="k">${badge(t.status, "")} ${esc(t.key)}</div><div class="d">${t.duration_ms != null ? `${t.duration_ms.toLocaleString()} ms` : "not run"}${t.detail ? `<br><span style="color:var(--danger)">${esc(t.detail)}</span>` : ""}</div></div>`).join("")}</div>
-      <div class="card"><h3>Parameters</h3><dl class="kv"><dt>source</dt><dd>${esc(r.only_source || "all sources")}</dd><dt>Reader</dt><dd>${esc(r.reader || "–")}</dd></dl></div>`;
+      ${runLayers(r)}
+      <div class="card"><h3>Parameters</h3><dl class="kv"><dt>source</dt><dd>${esc(r.only_source || "all sources")}</dd><dt>Reader</dt><dd>${esc(r.reader || "–")}</dd><dt>Storage</dt><dd>${esc(r.storage === "drive" ? "Shared Drive" : r.storage === "local" ? "this run only" : "–")}</dd></dl></div>`;
+  }
+
+  function runLayers(r) {
+    const L = r.layers;
+    if (!L || !Object.keys(L.silver || {}).length) return "";
+    const tables = Object.keys(L.silver);
+    return `<div class="card" style="margin-bottom:16px"><h3>What each layer did</h3><div class="table-wrap"><table><thead><tr><th>Table</th>
+        <th>${layerBadge("bronze")} appended</th><th>kept</th><th>${layerBadge("silver")} inserted</th><th>updated</th><th>deleted</th><th>unchanged</th><th>merged</th><th>quality</th><th>${layerBadge("gold")} records</th></tr></thead><tbody>
+      ${tables.map((t) => { const b = L.bronze?.[t] || {}, s = L.silver[t]; return `<tr><td class="mono"><a href="#/catalog/${esc(t)}/layer/silver">${esc(t)}</a></td>
+        <td class="num">${fmtInt(b.appended)}</td><td class="num">${fmtInt(b.total_rows)}</td><td class="num">${fmtInt(s.inserted)}</td><td class="num">${fmtInt(s.updated)}</td><td class="num">${fmtInt(s.deleted)}</td><td class="num">${fmtInt(s.unchanged)}</td><td class="num">${fmtInt(s.duplicates_superseded)}</td>
+        <td class="nowrap">${badge("ok", fmtInt(s.dq?.pass))} ${badge("warn", fmtInt(s.dq?.warn))} ${badge("fail", fmtInt(s.dq?.fail))}</td><td class="num">${fmtInt(L.gold?.tables?.[t])}</td></tr>`; }).join("")}
+      </tbody></table></div>
+      ${(L.outputs || []).length ? `<p class="small" style="margin:10px 0 0"><b>Sheets written:</b> ${L.outputs.map((o) => o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">${esc(o.name)}</a>` : esc(o.name)).join(" · ")}</p>` : ""}
+      ${L.store ? `<p class="muted small" style="margin:6px 0 0">Saved ${Object.keys(L.store.bytes || {}).length} Parquet files (${fmtInt(Math.round(Object.values(L.store.bytes || {}).reduce((a, n) => a + n, 0) / 1024))} KB) to ${L.store.kind === "drive" ? "the Shared Drive" : "run-local storage"}.</p>` : ""}</div>`;
   }
 
   function ingestion() {
@@ -1179,6 +1409,8 @@ ${srcs}`;
       { kind: "Job", label: JOB_ID, href: `#/jobs/${JOB_ID}` },
       { kind: "Page", label: "Governance", href: "#/governance" },
       { kind: "Page", label: "Job Runs", href: "#/runs" },
+      { kind: "Page", label: "Data Quality", href: "#/quality" },
+      { kind: "Page", label: "SQL Editor", href: "#/sql" },
     ];
   }
   function wireSearch() {

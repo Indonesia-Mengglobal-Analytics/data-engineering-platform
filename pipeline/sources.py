@@ -8,9 +8,11 @@ from pathlib import Path
 from contract import SheetSnapshot
 
 SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+# Write access is needed for the lakehouse and outputs in the Shared Drive; the service account can
+# still only touch what has been shared with it (sources as Viewer, the Shared Drive as Content manager).
 SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets",
 ]
 
 

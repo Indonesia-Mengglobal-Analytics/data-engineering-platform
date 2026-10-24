@@ -33,8 +33,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 from contract import check  # noqa: E402
 from governance import COUNTED, WITHHELD, classify, suppress  # noqa: E402
 import knowledge  # noqa: E402
+import lakehouse  # noqa: E402
+import quality  # noqa: E402
+from exports import GoogleSheets, LocalSheets, export_outputs  # noqa: E402
+from storage import DriveStorage, LocalStorage  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
 from sources import GoogleSource, SourceError, from_fixtures  # noqa: E402
+
+TASK_KEYS = ("discover", "validate", "bronze", "silver", "gold", "store", "govern", "export", "publish")
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUTS = ("catalog", "jobs", "governance", "dashboard", "knowledge")
@@ -90,14 +96,12 @@ def load_previous(folder: str | None, pin: str) -> dict:
     return previous
 
 
-def discover(config: dict, fixtures: str | None, only: str | None):
+def discover(config: dict, fixtures: str | None, only: str | None, google: GoogleSource | None):
     if fixtures:
         sheets = from_fixtures(Path(fixtures))
         return [s for s in sheets if not only or getattr(s, "spreadsheet_id", None) == only], "fixtures"
-    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
-    if not raw:
+    if google is None:
         raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is not set")
-    google = GoogleSource(json.loads(raw))
     ids = [only] if only else google.discover(config["sources"]["drive_folder_ids"], config["sources"]["spreadsheet_ids"])
     return [google.read(i) for i in ids], google.account
 
@@ -112,9 +116,8 @@ def validate(sheets, contract: dict):
     return checked
 
 
-def ingest(con, checked, contract: dict) -> dict[str, str]:
-    """Load each registered sheet into raw.<table>. Returns spreadsheet_id -> table name."""
-    con.execute("CREATE SCHEMA IF NOT EXISTS raw")
+def table_names(checked) -> dict[str, str]:
+    """spreadsheet_id -> table name for registered sheets."""
     tables, used = {}, set()
     for sheet, result in checked:
         if result is None or not result.registered:
@@ -123,16 +126,84 @@ def ingest(con, checked, contract: dict) -> dict[str, str]:
         while table in used:
             table += "_2"
         used.add(table)
-        names = [c["column_name"] for c in result.columns]
-        rows = sheet.tabs[contract["data_tab"]][1:]
-        rows = [[(r[i] if i < len(r) else None) for i in range(len(names))] for r in rows if any(str(v).strip() for v in r)]
-        cols = ", ".join(f'"{n}" VARCHAR' for n in names)
-        con.execute(f'CREATE OR REPLACE TABLE raw."{table}" ({cols})')
-        if rows:
-            placeholders = ", ".join("?" for _ in names)
-            con.executemany(f'INSERT INTO raw."{table}" VALUES ({placeholders})', rows)
         tables[sheet.spreadsheet_id] = table
     return tables
+
+
+def bronze(con, checked, tables, config, storage, run, layers) -> None:
+    """Load each table's history from storage, then append this run's snapshot to bronze."""
+    lakehouse.setup(con)
+    for sheet, result in checked:
+        if result is None or not result.registered:
+            continue
+        table = tables[sheet.spreadsheet_id]
+        for layer in ("bronze", "silver"):
+            lakehouse.load(con, storage, layer, table)
+        names = [c["column_name"] for c in result.columns]
+        numbered = [(i + 2, [(r[j] if j < len(r) else None) for j in range(len(names))])
+                    for i, r in enumerate(sheet.tabs[config["contract"]["data_tab"]][1:])
+                    if any(str(v).strip() for v in r)]
+        layers["bronze"][table] = lakehouse.bronze(con, table, sheet.spreadsheet_id, names, numbered, run["run_id"],
+                                                   run["started_at"], config["storage"]["bronze_retention_days"])
+
+
+def silver(con, checked, tables, config, run, layers) -> None:
+    q = config["quality"]
+    for sheet, result in checked:
+        if result is None or not result.registered:
+            continue
+        table = tables[sheet.spreadsheet_id]
+        names = [c["column_name"] for c in result.columns]
+        custom, warnings = quality.sheet_rules(sheet.tabs.get(q["rules_tab"]), names)
+        result.warnings.extend(warnings)
+        rules = [r for r in quality.standard_rules(names, q["standard"]) + custom if r.column not in sheet.unread]
+        lower = [c for c in names if re.search(q["lowercase"], c)]
+        layers["silver"][table] = lakehouse.silver(con, table, names, rules, q["record_key"], lower,
+                                                   run["run_id"], run["started_at"])
+
+
+def gold(con, checked, tables, storage, only, layers) -> None:
+    titles = {tables[s.spreadsheet_id]: s.title for s, r in checked if r is not None and r.registered}
+    if only:
+        # A single-sheet refresh still rebuilds the consolidated table from every source's silver.
+        manifest = json.loads((storage.read("lakehouse/_manifest.json") or b"{}").decode() or "{}")
+        for table, meta in manifest.get("tables", {}).items():
+            if table not in titles and lakehouse.load(con, storage, "silver", table):
+                lakehouse.load(con, storage, "bronze", table)
+                con.execute(f'CREATE OR REPLACE TEMP TABLE "issues_{table}" AS SELECT NULL::VARCHAR AS record_key, '
+                            "NULL::VARCHAR AS column_name, NULL::VARCHAR AS rule, NULL::VARCHAR AS severity, "
+                            "NULL::VARCHAR AS message, NULL::BIGINT AS sheet_row WHERE false")
+                titles[table] = meta["title"]
+    layers["gold"] = lakehouse.gold(con, titles)
+    layers["tables"] = titles
+
+
+def store(con, storage, layers, checked, tables, run) -> None:
+    sizes = {}
+    for table in layers["tables"]:
+        for layer in ("bronze", "silver", "gold"):
+            sizes[f"{layer}.{table}"] = lakehouse.save(con, storage, layer, table)
+    for name in ("consolidated", "dq_issues"):
+        if layers["tables"]:
+            sizes[f"gold.{name}"] = lakehouse.save(con, storage, "gold", name)
+    ids = {t: sid for sid, t in tables.items()}
+    old = json.loads((storage.read("lakehouse/_manifest.json") or b"{}").decode() or "{}")
+    manifest = {"updated_at": run["started_at"], "run_id": run["run_id"],
+                "tables": {**old.get("tables", {}),
+                           **{t: {"title": title, "source_id": ids.get(t, old.get("tables", {}).get(t, {}).get("source_id"))}
+                              for t, title in layers["tables"].items()}}}
+    storage.write("lakehouse/_manifest.json", json.dumps(manifest, indent=1).encode())
+    layers["store"] = {"kind": storage.kind, "bytes": sizes, "link": storage.link("lakehouse"),
+                       "outputs_link": storage.link("outputs"), "previews_link": storage.link("previews")}
+
+
+def export(con, writer, layers, checked, tables, run) -> None:
+    if writer is None:
+        layers["outputs"] = []
+        return
+    by_table = {tables[s.spreadsheet_id]: {"title": s.title, "id": s.spreadsheet_id}
+                for s, r in checked if r is not None and r.registered}
+    layers["outputs"] = export_outputs(con, writer, by_table, run, layers)
 
 
 def govern(con, checked, tables: dict, rules: list[dict]) -> dict[str, dict[str, str]]:
@@ -347,8 +418,15 @@ def publish(con, checked, tables, classes, config, previous, only, run) -> dict:
             table = tables[sheet.spreadsheet_id]
             names = [c["column_name"] for c in result.columns]
             total, completeness = profile(con, table, names, sheet.unread)
-            entry.update({"fqn": f"sheets.raw.{table}", "curated_fqn": f"sheets.curated.{table}", "rows": total,
-                          "ingested_at": run["started_at"], "partial_load": bool(sheet.unread)})
+            lay = run["layers"]
+            silver_metrics = lay["silver"].get(table, {})
+            entry.update({"fqn": f"sheets.gold.{table}", "bronze_fqn": f"sheets.bronze.{table}",
+                          "silver_fqn": f"sheets.silver.{table}", "curated_fqn": f"sheets.curated.{table}",
+                          "rows": total, "ingested_at": run["started_at"], "partial_load": bool(sheet.unread),
+                          "layers": {"bronze": lay["bronze"].get(table),
+                                     "silver": {k: v for k, v in silver_metrics.items() if k != "rules"},
+                                     "gold": lay["gold"].get("tables", {}).get(table)},
+                          "quality_rules": silver_metrics.get("rules", [])})
             for c in result.columns:
                 klass = classes[sheet.spreadsheet_id][c["column_name"]]
                 entry["columns"].append({
@@ -388,7 +466,18 @@ def publish(con, checked, tables, classes, config, previous, only, run) -> dict:
     }
     return {
         "catalog": {"generated_at": run["started_at"], "sources": catalog,
-                    "contract": config["contract"]},
+                    "contract": config["contract"],
+                    "lakehouse": {"storage": run.get("storage"), "link": run["layers"].get("store", {}).get("link"),
+                                  "outputs_link": run["layers"].get("store", {}).get("outputs_link"),
+                                  "previews_link": run["layers"].get("store", {}).get("previews_link"),
+                                  "tables": sorted(run["layers"].get("tables", {})),
+                                  "consolidated_rows": run["layers"]["gold"].get("consolidated_rows"),
+                                  "dq_issue_rows": run["layers"]["gold"].get("dq_issue_rows"),
+                                  "outputs": run["layers"].get("outputs", []),
+                                  "bronze_retention_days": config["storage"]["bronze_retention_days"],
+                                  "preview_retention_hours": config["outputs"]["preview_retention_hours"],
+                                  "quality_rules_tab": config["quality"]["rules_tab"],
+                                  "record_key": config["quality"]["record_key"]}},
         "dashboard": {"generated_at": run["started_at"], "sources": dashboard},
         "governance": {"generated_at": run["started_at"], **governance},
     }
@@ -399,6 +488,8 @@ def main() -> int:
     parser.add_argument("--fixtures", help="read sheets from local JSON fixtures instead of Google")
     parser.add_argument("--out", default=str(ROOT / "site" / "data"))
     parser.add_argument("--warehouse", default=str(ROOT / "build" / "warehouse.duckdb"))
+    parser.add_argument("--lakehouse", help="local lakehouse folder (used when no Shared Drive is configured); "
+                                            "spreadsheet outputs are written there as JSON")
     args = parser.parse_args()
 
     config = yaml.safe_load((ROOT / "config" / "platform.yml").read_text())
@@ -425,12 +516,32 @@ def main() -> int:
     started = time.monotonic()
     outputs: dict = {}
     failed = None
+    layers: dict = {"bronze": {}, "silver": {}, "gold": {}, "tables": {}, "outputs": []}
+    run["layers"] = layers
     try:
-        sheets, reader = tasks.run("discover", discover, config, args.fixtures, only)
+        google = None
+        raw_key = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+        if raw_key and not args.fixtures:
+            google = GoogleSource(json.loads(raw_key))
+        folder = config.get("storage", {}).get("shared_drive_folder_id", "")
+        if google and folder:
+            storage = DriveStorage(google.drive, folder)
+            writer = GoogleSheets(google.drive, google.sheets, storage)
+        else:
+            storage = LocalStorage(Path(args.lakehouse or ROOT / "build" / "lakehouse"))
+            writer = LocalSheets(Path(args.lakehouse) / "sheets") if args.lakehouse else None
+        run["storage"] = storage.kind
+
+        sheets, reader = tasks.run("discover", discover, config, args.fixtures, only, google)
         run["reader"] = reader
         checked = tasks.run("validate", validate, sheets, config["contract"])
-        tables = tasks.run("ingest", ingest, con, checked, config["contract"])
+        tables = table_names(checked)
+        tasks.run("bronze", bronze, con, checked, tables, config, storage, run, layers)
+        tasks.run("silver", silver, con, checked, tables, config, run, layers)
+        tasks.run("gold", gold, con, checked, tables, storage, only, layers)
+        tasks.run("store", store, con, storage, layers, checked, tables, run)
         classes = tasks.run("govern", govern, con, checked, tables, config["governance"]["rules"])
+        tasks.run("export", export, con, writer, layers, checked, tables, run)
         outputs = tasks.run("publish", publish, con, checked, tables, classes, config, previous, only, run)
         statuses = [s["status"] for s in outputs["catalog"]["sources"] if not only or s["id"] == only]
         run["sources"] = {k: statuses.count(k) for k in ("registered", "rejected", "unreachable")}
@@ -446,11 +557,12 @@ def main() -> int:
     run["duration_s"] = round(time.monotonic() - started, 1)
     run["tasks"] = tasks.items
     done = {t["key"] for t in tasks.items}
-    run["tasks"] += [{"key": k, "status": "skipped"} for k in ("discover", "validate", "ingest", "govern", "publish") if k not in done]
+    run["tasks"] += [{"key": k, "status": "skipped"} for k in TASK_KEYS if k not in done]
 
     runs = [run] + previous.get("jobs", {}).get("runs", [])
     jobs = {"generated_at": run["finished_at"], "runs": runs[:MAX_RUNS],
             "workflow": {"repository": config["github"]["repository"], "file": config["github"]["workflow_file"],
+                         "query_file": config["github"].get("query_workflow_file", "query.yml"),
                          "schedule": os.environ.get("PIPELINE_SCHEDULE", "")}}
 
     out = Path(args.out)
