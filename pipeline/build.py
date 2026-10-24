@@ -32,11 +32,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from contract import check  # noqa: E402
 from governance import COUNTED, WITHHELD, classify, suppress  # noqa: E402
+import knowledge  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
 from sources import GoogleSource, SourceError, from_fixtures  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUTS = ("catalog", "jobs", "governance", "dashboard")
+OUTPUTS = ("catalog", "jobs", "governance", "dashboard", "knowledge")
 MAX_RUNS = 50
 # Google Forms writes the timestamp in the sheet's locale, so the format is chosen per column, not per value:
 # "01/07/2026" is 1 July in an Indonesian sheet and 7 January in a US one.
@@ -456,7 +457,10 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     if failed:
         # Keep the last good data; only the run history changes.
-        outputs = {k: previous[k] for k in ("catalog", "dashboard", "governance") if k in previous}
+        outputs = {k: previous[k] for k in ("catalog", "dashboard", "governance", "knowledge") if k in previous}
+    else:
+        outputs["knowledge"] = knowledge.build(outputs["catalog"], outputs["dashboard"], outputs["governance"],
+                                               jobs, config["contract"])
     for name, payload in {**outputs, "jobs": jobs}.items():
         (out / f"{name}.json").write_text(json.dumps(sealer.seal(payload)))
     print(json.dumps({k: run.get(k) for k in ("status", "sources", "duration_s", "error")}))

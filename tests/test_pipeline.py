@@ -234,3 +234,14 @@ def test_filter_cube_totals_and_generalisation(tmp_path):
     # Chart cubes add up to the chart totals for single-answer columns.
     sector = cube["charts"]["current_occupation_job_sector"]
     assert sum(r[-1] for r in sector["rows"]) == dash["kpis"]["records"]
+
+
+def test_knowledge_base_is_built_from_published_aggregates_only(tmp_path):
+    assert run_build(tmp_path).returncode == 0
+    kb = unseal(json.loads((tmp_path / "knowledge.json").read_text()), PIN)
+    kinds = {p["kind"] for p in kb["passages"]}
+    assert {"platform", "source", "column", "governance", "chart", "quality", "pipeline"} <= kinds
+    text = json.dumps(kb)
+    for leaked in ("applicant1@example.com", "Demo Applicant", "+62 812"):
+        assert leaked not in text
+    assert all(p["id"] and p["text"] and p["link"].startswith("#/") for p in kb["passages"])
