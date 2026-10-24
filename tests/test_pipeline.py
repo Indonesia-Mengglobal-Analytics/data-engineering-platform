@@ -257,7 +257,8 @@ def test_knowledge_base_is_built_from_published_aggregates_only(tmp_path):
 
 
 def _build_into(fixtures: Path, out: Path, lake: Path, previous: Path | None = None):
-    env = {**os.environ, "SITE_PIN": PIN}
+    # Two builds in one test are two runs: don't inherit the CI run's GITHUB_RUN_ID.
+    env = {**{k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}, "SITE_PIN": PIN}
     if previous:
         env["PREVIOUS_DIR"] = str(previous)
     return subprocess.run(

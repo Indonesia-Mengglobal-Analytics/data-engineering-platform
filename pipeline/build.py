@@ -499,7 +499,9 @@ def main() -> int:
     previous = load_previous(os.environ.get("PREVIOUS_DIR"), pin)
 
     run = {
-        "run_id": os.environ.get("GITHUB_RUN_ID", f"local-{int(time.time())}"),
+        # Unique per attempt: a re-run of the same workflow run must not merge into the earlier bronze snapshot.
+        "run_id": (f"{os.environ['GITHUB_RUN_ID']}.{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
+                   if os.environ.get("GITHUB_RUN_ID") else f"local-{int(time.time())}-{os.getpid()}"),
         "run_number": os.environ.get("GITHUB_RUN_NUMBER"),
         "trigger": os.environ.get("GITHUB_EVENT_NAME", "local"),
         "actor": os.environ.get("GITHUB_ACTOR", os.environ.get("USER", "local")),
