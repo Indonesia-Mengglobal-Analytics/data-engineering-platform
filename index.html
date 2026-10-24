@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>IM Data Platform</title>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+  <!-- Login: the PIN decrypts site/data/*.json in the browser; nothing loads without it. -->
+  <main id="login" class="login" hidden>
+    <form class="login-card" id="login-form" autocomplete="off">
+      <img src="assets/logo.svg" alt="" class="login-logo" width="40" height="40">
+      <h1>Sign in to IM Data Platform</h1>
+      <p class="muted">Indonesia Mengglobal workspace</p>
+      <label class="login-label" for="pin-0">Enter your 12-digit PIN</label>
+      <div class="pin" id="pin" role="group" aria-label="12-digit PIN"></div>
+      <p class="login-error" id="login-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-block" id="login-submit" type="submit" disabled>Continue</button>
+      <p class="muted small">Data on this site is encrypted. The PIN unlocks it in your browser and is never sent anywhere.</p>
+    </form>
+  </main>
+
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <button class="icon-btn nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <svg viewBox="0 0 16 16" width="16" height="16"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+      <a class="brand" href="#/">
+        <img src="assets/logo.svg" alt="" width="22" height="22">
+        <span>IM Data Platform</span>
+      </a>
+      <label class="search">
+        <svg viewBox="0 0 16 16" width="14" height="14"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.5"/></svg>
+        <input id="search" type="search" placeholder="Search tables, columns, jobs and dashboards" autocomplete="off">
+        <kbd>Ctrl + P</kbd>
+        <div class="search-results" id="search-results" hidden></div>
+      </label>
+      <div class="topbar-right">
+        <span class="workspace-pill" title="Workspace">indonesia-mengglobal</span>
+        <button class="avatar" id="sign-out" title="Sign out">IM</button>
+      </div>
+    </header>
+
+    <nav class="sidebar" id="sidebar">
+      <a class="btn btn-new" href="#/ingestion">
+        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6"/></svg> New
+      </a>
+      <a class="nav" data-route="home" href="#/"><i data-icon="home"></i>Workspace</a>
+      <a class="nav" data-route="catalog" href="#/catalog"><i data-icon="catalog"></i>Catalog</a>
+      <a class="nav" data-route="jobs" href="#/jobs"><i data-icon="jobs"></i>Jobs &amp; Pipelines</a>
+      <a class="nav" data-route="governance" href="#/governance"><i data-icon="shield"></i>Governance</a>
+      <div class="nav-section">SQL</div>
+      <a class="nav" data-route="dashboards" href="#/dashboards"><i data-icon="dashboard"></i>Dashboards</a>
+      <div class="nav-section">Data Engineering</div>
+      <a class="nav" data-route="runs" href="#/runs"><i data-icon="runs"></i>Job Runs</a>
+      <a class="nav" data-route="ingestion" href="#/ingestion"><i data-icon="ingest"></i>Data Ingestion</a>
+      <div class="sidebar-foot muted small" id="sidebar-foot"></div>
+    </nav>
+
+    <main class="content" id="content" tabindex="-1"></main>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden></div>
+  <script src="assets/app.js"></script>
+</body>
+</html>
