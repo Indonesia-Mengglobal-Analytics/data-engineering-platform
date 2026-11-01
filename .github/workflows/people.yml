@@ -14,8 +14,14 @@ on:
     branches: [main]
     paths:
       - config/people.yml
+      - config/places.yml
       - pipeline/people.py
+      - pipeline/people_gold.py
       - pipeline/people_build.py
+      - pipeline/sources.py
+      - pipeline/seal.py
+      - tests/fixtures/people/**
+      - tests/test_people.py
       - .github/workflows/people.yml
 
 permissions:
