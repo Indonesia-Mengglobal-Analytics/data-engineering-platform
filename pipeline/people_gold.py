@@ -486,3 +486,32 @@ def aggregate_graph(gold: list[dict], events: list[dict], mentorships: list[dict
         if n["kind"] == "role":
             n["weight"] = len(role_people[n["label"]])
     return {"nodes": list(nodes.values()), "edges": edges}
+
+
+# ---------------------------------------------------------------- directory (tree view, names)
+
+DIRECTORY_FIELDS = ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
+                    "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had"]
+
+
+def directory(built: dict, mentorships: list[dict]) -> dict:
+    """Names for the site's tree view, only when config people.publish_directory is true.
+
+    Deliberately minimal: no email, phone, LinkedIn, birth date or birth place. People are referred to
+    by their position in the list, not by person_id.
+    """
+    gold = sorted(built["gold"], key=lambda g: (g["full_name"] or "").lower())
+    index = {g["person_id"]: i for i, g in enumerate(gold)}
+    people = [[g["full_name"] or "(no name)", [r for r in ROLE_ORDER if g[f"is_{r.lower()}"]], g["residence_city"],
+               g["residence_province"], g["residence_island_region"], g["residence_country"], g["study_country"],
+               g["target_country"], g["institution"], g["first_year"], g["last_year"], g["events_attended"],
+               g["events_spoken"], g["mentees_mentored"], g["mentors_had"]] for g in gold]
+    pairs = [[index[m["mentor_id"]], index[m["mentee_id"]], m["program"], m["year"]] for m in mentorships
+             if m["mentor_id"] in index and m["mentee_id"] in index]
+    events = []
+    for e in sorted(built["events"], key=lambda e: (-(e["event_year"] or 0), e["event_name"])):
+        ids = e["_ids"]
+        events.append([e["event_name"], e["event_year"], sorted(index[p] for p in ids["participants"] if p in index),
+                       sorted(index[p] for p in ids["speakers"] if p in index), sorted(index[p] for p in ids["committee"] if p in index)])
+    return {"fields": DIRECTORY_FIELDS, "people": people, "mentorships": pairs, "events": events,
+            "event_fields": ["name", "year", "participants", "speakers", "committee"]}

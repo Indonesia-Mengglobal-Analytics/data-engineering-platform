@@ -203,6 +203,11 @@ people:
         mentor: {tab: raw mentor, id: id, name: Full Name, phone: Phone number (WhatsApp)}
         mentee: {tab: raw mentee, id: id, name: Full Name}
 
+  # Names on the site (People -> Tree), decided by the data team on 1 Nov 2026: a separate file sealed with
+  # the site PIN, holding name, roles, city/province/region, study and target country, institution, years,
+  # events attended and mentees mentored. Never email, phone, LinkedIn or birth data. false removes the file.
+  publish_directory: true
+
   # Known but not used, and why (shown on the People page).
   not_used:
     - {title: "keynote_speakers.csv", reason: "Only a phone column: no email or name to identify a person"}

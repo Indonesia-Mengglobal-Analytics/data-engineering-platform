@@ -280,7 +280,7 @@ def main() -> int:
            "actor": os.environ.get("GITHUB_ACTOR", os.environ.get("USER", "local")), "started_at": P.utcnow()}
     if os.environ.get("GITHUB_RUN_ID"):
         run["url"] = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    tasks, started, failed, payload = [], time.monotonic(), None, None
+    tasks, started, failed, payload, directory = [], time.monotonic(), None, None, None
     max_year = datetime.now(timezone.utc).year + 1
     min_year = int(config.get("min_year", 2015))
 
@@ -331,6 +331,7 @@ def main() -> int:
         built, links, pair_inventory = step("gold", gold)
         payload = step("build", aggregates, records, result, inventory, config["labels"], config)
         payload["gold"] = G.site_aggregates(built, links, pair_inventory, K)
+        directory = G.directory(built, links) if config.get("publish_directory") else None
 
         def store():
             write_tables(con, records, result, inventory)
@@ -384,6 +385,13 @@ def main() -> int:
     doc = {**(payload or {}), "generated_at": run["finished_at"], "runs": runs,
            "workflow": {"repository": platform["github"]["repository"], "file": "people.yml"}}
     (out / "people.json").write_text(json.dumps(sealer.seal(doc)))
+    # Names for the tree view: a separate sealed file, written only when the run succeeded (a failed run
+    # keeps the last one) and removed when publishing is switched off.
+    dir_path = out / "people_directory.json"
+    if not config.get("publish_directory"):
+        dir_path.unlink(missing_ok=True)
+    elif payload is not None and not failed and directory is not None:
+        dir_path.write_text(json.dumps(sealer.seal({**directory, "generated_at": run["finished_at"]})))
 
     kb_path = out / "knowledge.json"
     if payload and kb_path.exists():

@@ -71,7 +71,7 @@ jobs:
           BASE: ${{ steps.pages.outputs.base_url }}
         run: |
           mkdir -p previous site/data
-          for f in catalog jobs governance dashboard knowledge people; do
+          for f in catalog jobs governance dashboard knowledge people people_directory; do
             curl -fsSL "$BASE/data/$f.json" -o "previous/$f.json" || rm -f "previous/$f.json"
           done
           ls -la previous

@@ -144,9 +144,25 @@ WHERE e.edge_type = 'MENTORED' AND e.src = (SELECT person_id FROM people.gold_pe
 ```
 
 On the site, **People → People gold** filters by role and region where people live, and shows provinces, cities,
-birth provinces, study and target countries, institutions, events attended and mentees per mentor; **People → Graph**
-shows the community as a network of roles, regions, countries and events. Both are counts only, with groups under 5
-hidden. The gold table itself is the **Gold** tab of the PEOPLE sheet (plus **Mentorships** and **Events**).
+birth provinces, study and target countries, institutions, events attended and mentees per mentor (counts only, groups
+under 5 hidden). The gold table itself is the **Gold** tab of the PEOPLE sheet (plus **Mentorships** and **Events**).
+
+**People → Tree** is a left-to-right hierarchy with right-angle (orthogonal) edges down to people's names. Children of a
+parent share one vertical trunk, so lines never cross; branches expand and collapse with a short animation (none when the
+system asks for reduced motion), and long lists of people show 40 at a time. Five groupings:
+
+| View | Levels |
+|---|---|
+| By role | Management team / Master mentorship / PhD mentorship / Events → role → region → province → city → people |
+| By place | Region (or Abroad → country) → province → city → role group → role → people |
+| Mentorship | Program → year → mentor → mentees |
+| Events | Year → event → speakers / committee / participants → people |
+| Study country | Country studied in (mentors) or targeted (mentees) → role → people |
+
+Filters: search (name, city, province, region, country, institution), roles, region, province, Indonesia or abroad,
+study/target country, minimum events attended, mentored someone, active years. Clicking a person opens their roles,
+place, study, events, mentors and mentees (each clickable). The tree reads `people_directory.json`, written only while
+`publish_directory: true` in `config/people.yml`.
 
 The two workflows deploy to the same Pages site. Each downloads the files the other published and carries them forward.
 Run the main pipeline once before the first people run.
@@ -155,7 +171,10 @@ Run the main pipeline once before the first people run.
 
 The repository and its Pages site are public, so:
 
-1. **Rows never reach this site.** They live only in Google: the source sheets, and the Shared Drive (lakehouse Parquet,
+1. **Rows never reach this site, except the people directory.** With `publish_directory: true` (decided by the data
+   team on 1 Nov 2026), `people_directory.json` holds each person's name, roles, city/province/region or country,
+   study and target country, institution, active years, events attended and mentees mentored, for the People → Tree view.
+   Never email, phone, LinkedIn or birth data. Set it to `false` to remove the file on the next run. Everything else lives only in Google: the source sheets, and the Shared Drive (lakehouse Parquet,
    output sheets, previews), where Drive sharing decides who can open them. The run's local DuckDB file is deleted at the
    end of the job, and only aggregates are published to Pages.
 2. **Personal and sensitive columns are dropped** before anything is counted (`config/platform.yml` → `governance.rules`).

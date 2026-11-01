@@ -243,3 +243,40 @@ def test_gold_site_aggregates_hide_small_groups(gold_run):
     blob = json.dumps(g)
     for leaked in ("@gmail.com", "Dimas", "+62812", "IMP-"):
         assert leaked not in blob
+
+
+def test_directory_has_names_but_no_contact_details(gold_run, tmp_path):
+    con, doc, lake = gold_run
+    out = lake.parent / "out"
+    d = unseal(json.loads((out / "people_directory.json").read_text()), PIN)
+    assert d["fields"] == ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
+                           "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had"]
+    assert len(d["people"]) == doc["kpis"]["people"]
+    assert any(p[0] == "Dimas Wijaya" for p in d["people"])
+    blob = json.dumps(d)
+    for leaked in ("@", "+62", "IMP-", "linkedin", "1/2/1998"):
+        assert leaked not in blob
+    # Pairs and events point at list positions.
+    assert len(d["mentorships"]) == 21 and all(0 <= a < len(d["people"]) and 0 <= b < len(d["people"]) for a, b, *_ in d["mentorships"])
+    # Names never reach the aggregate file.
+    assert "Dimas" not in json.dumps(doc)
+
+
+def test_directory_off_removes_the_file(tmp_path):
+    import shutil
+
+    cfg = ROOT / "config" / "people.yml"
+    original = cfg.read_text()
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "people_directory.json").write_text("{}")
+    try:
+        cfg.write_text(original.replace("publish_directory: true", "publish_directory: false"))
+        res = subprocess.run([sys.executable, str(ROOT / "pipeline" / "people_build.py"), "--fixtures", str(ROOT / "tests" / "fixtures" / "people"),
+                              "--lakehouse", str(tmp_path / "lake"), "--out", str(out)],
+                             env={**{k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}, "SITE_PIN": PIN}, capture_output=True, text=True)
+    finally:
+        cfg.write_text(original)
+    assert res.returncode == 0, res.stderr
+    assert not (out / "people_directory.json").exists()
+    shutil.rmtree(tmp_path / "lake", ignore_errors=True)

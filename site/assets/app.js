@@ -3,7 +3,7 @@
   "use strict";
 
   const FILES = ["catalog", "jobs", "governance", "dashboard"];
-  const OPTIONAL_FILES = ["people"];
+  const OPTIONAL_FILES = ["people", "people_directory"];
   const PEOPLE_JOB = "people_dataset";
   const PEOPLE_TASKS = [
     { key: "read", desc: "Read every people source in config/people.yml" },
@@ -260,8 +260,8 @@
     if (sqlEl) mountSql(sqlEl);
     const askEl = $("#ask");
     if (askEl) mountAsk(askEl);
-    const graphEl = $("#pgraph");
-    if (graphEl) mountGraph(graphEl);
+    const treeEl = $("#ptree");
+    if (treeEl) mountTree(treeEl);
   }
 
   // ---------- pages ----------
@@ -1054,8 +1054,8 @@
         (failed ? `<div class="callout danger"><b>Last run ${esc(failed.status)}.</b> <code>${esc(failed.error || "")}</code></div>` : "") +
         `<div class="empty"><h2>Not built yet</h2><p class="muted">Run <b>People dataset</b> in GitHub Actions once. It needs the service account to have access to the sources in <code>config/people.yml</code>.</p></div>`;
     }
-    const tabs = [["gold", "People gold"], ["graph", "Graph"], ["overview", "Dedup overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
-    const body = { gold: peopleGold, graph: peopleGraph, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
+    const tabs = [["gold", "People gold"], ["tree", "Tree"], ["overview", "Dedup overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
+    const body = { gold: peopleGold, tree: peopleTree, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
     if (!body) return notFound();
     const sheet = P.outputs?.sheet;
     return head("People dataset", `One row per person across mentorship (Master and PhD), events and management. Built ${esc(ago(P.generated_at))}.`,
@@ -1149,87 +1149,466 @@
         </ul></div>`;
   }
 
-  // Aggregated network: roles, regions, countries, events. Edges carry people counts (>= k).
-  const GRAPH_COLORS = { role: "--c1", region: "--c3", country: "--c2", event: "--c6" };
-  const GRAPH_KIND_LABEL = { role: "Role", region: "Region where they live", country: "Country studied in or targeted", event: "Event" };
-  function peopleGraph(P) {
-    const g = P.gold?.graph;
-    if (!g || !g.nodes.length) return `<div class="empty"><h2>No graph yet</h2><p class="muted">Run the people job once more to build it.</p></div>`;
-    return `<div class="card"><h3>How the community connects</h3><div class="sub muted small" style="margin-bottom:8px">Circles are roles, regions, countries and events; their size is the number of people. Lines are people linking two circles (thicker = more), shown when at least ${P.rules.min_group_size}. Hover a circle to see its links; drag to rearrange.</div>
-        <div class="graph-legend small">${Object.entries(GRAPH_KIND_LABEL).map(([k, l]) => `<span><i style="background:var(${GRAPH_COLORS[k]})"></i>${l}</span>`).join("")}</div>
-        <div id="pgraph" class="pgraph"></div></div>
-      <div class="card" style="margin-top:16px"><h3>Links</h3><div class="table-wrap"><table><thead><tr><th>From</th><th>Link</th><th>To</th><th class="num">People</th></tr></thead><tbody>
-        ${[...g.edges].sort((a, b) => b.weight - a.weight).map((e) => `<tr><td>${esc(graphLabel(e.source))}</td><td class="muted">${esc(e.kind)}</td><td>${esc(graphLabel(e.target))}</td><td class="num">${fmtInt(e.weight)}</td></tr>`).join("")}
-      </tbody></table></div>
-      <p class="muted small" style="margin:8px 0 0">The person-level graph (who mentored whom, who attended what, who lives where) is in <code>people.graph_nodes</code> and <code>people.graph_edges</code>: query it from the SQL editor.</p></div>`;
-  }
-  function graphLabel(id) {
-    const [kind, ...rest] = id.split(":");
-    const v = rest.join(":");
-    return kind === "role" ? roleName(v) : v;
+  // ---------- people tree ----------
+  // Left-to-right tidy tree with orthogonal (right-angle) edges. Children of one parent share a single
+  // vertical trunk, so lines never cross. Built in the browser from people_directory.json.
+  const ROLE_GROUPS = [
+    { key: "Management team", color: "--c6", roles: ["MANAGEMENT_MEMBER", "MANAGEMENT_CANDIDATE"] },
+    { key: "Master mentorship", color: "--c1", roles: ["MASTER_MENTOR", "MASTER_MENTEE"] },
+    { key: "PhD mentorship", color: "--c4", roles: ["PHD_MENTOR", "PHD_MENTEE"] },
+    { key: "Events", color: "--c2", roles: ["EVENT_SPEAKER", "EVENT_COMMITTEE", "EVENT_PARTICIPANT"] },
+  ];
+  const ROLE_GROUP = Object.fromEntries(ROLE_GROUPS.flatMap((g) => g.roles.map((r) => [r, g])));
+  const roleColor = (r) => ROLE_GROUP[r]?.color || "--c9";
+  const TREE_VIEWS = [
+    ["role", "By role"], ["place", "By place"], ["mentor", "Mentorship"], ["event", "Events"], ["study", "Study country"],
+  ];
+  const TREE = {
+    view: "role", q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0,
+    mentored: false, yearFrom: "", yearTo: "", expanded: new Set(["root"]), caps: new Map(), selected: null,
+    prev: new Map(), els: new Map(), auto: true,
+  };
+  const NODE_W = 196, NODE_H = 32, COL = NODE_W + 64, ROW = 42, PAD = 24, CAP = 40;
+  let DIR = null;
+
+  function directoryPeople() {
+    const d = D.people_directory;
+    if (!d) return null;
+    if (DIR && DIR.src === d) return DIR;
+    const f = Object.fromEntries(d.fields.map((k, i) => [k, i]));
+    const people = d.people.map((r, i) => {
+      const p = { i, name: r[f.name], roles: r[f.roles], city: r[f.city], province: r[f.province], region: r[f.region],
+        country: r[f.country], study: r[f.study_country], target: r[f.target_country], inst: r[f.institution],
+        fy: r[f.first_year], ly: r[f.last_year], ev: r[f.events_attended], sp: r[f.events_spoken], mm: r[f.mentees_mentored], mh: r[f.mentors_had] };
+      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, ...p.roles.map(roleName)]
+        .filter(Boolean).join(" · ").toLowerCase();
+      return p;
+    });
+    const mentees = new Map(), mentors = new Map();
+    for (const [a, b, prog, year] of d.mentorships) {
+      if (!mentees.has(a)) mentees.set(a, []);
+      if (!mentors.has(b)) mentors.set(b, []);
+      mentees.get(a).push({ i: b, prog, year });
+      mentors.get(b).push({ i: a, prog, year });
+    }
+    const events = d.events.map(([name, year, participants, speakers, committee]) => ({ name, year, participants, speakers, committee }));
+    const eventsOf = new Map();
+    events.forEach((e, ei) => ["participants", "speakers", "committee"].forEach((k) => e[k].forEach((pi) => {
+      if (!eventsOf.has(pi)) eventsOf.set(pi, []);
+      eventsOf.get(pi).push({ ei, as: k });
+    })));
+    DIR = { src: d, people, mentees, mentors, events, eventsOf, pairs: d.mentorships };
+    return DIR;
   }
 
-  function mountGraph(el) {
-    const g = D.people?.gold?.graph;
-    if (!g) return;
-    const W = el.clientWidth || 900, H = Math.max(440, Math.min(640, W * 0.62));
-    const maxW = Math.max(1, ...g.nodes.map((n) => n.weight));
-    const nodes = g.nodes.map((n, i) => {
-      const a = (2 * Math.PI * i) / g.nodes.length;
-      return { ...n, r: 7 + 22 * Math.sqrt(n.weight / maxW), x: W / 2 + Math.cos(a) * W * 0.3, y: H / 2 + Math.sin(a) * H * 0.3, vx: 0, vy: 0 };
+  const placeOf = (p) => p.region ? p.region : p.country && p.country !== "Indonesia" ? "Abroad" : null;
+
+  function treeFilter(dir) {
+    const t = TREE, tokens = t.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return dir.people.filter((p) => {
+      if (tokens.length && !tokens.every((w) => p.hay.includes(w))) return false;
+      if (t.roles.size && !p.roles.some((r) => t.roles.has(r))) return false;
+      if (t.regions.size && !t.regions.has(placeOf(p) || "Not stated")) return false;
+      if (t.province && p.province !== t.province) return false;
+      if (t.lives === "id" && p.country !== "Indonesia") return false;
+      if (t.lives === "abroad" && !(p.country && p.country !== "Indonesia")) return false;
+      if (t.country && p.study !== t.country && p.target !== t.country) return false;
+      if (t.minEvents && (p.ev || 0) < t.minEvents) return false;
+      if (t.mentored && !p.mm) return false;
+      if (t.yearFrom && (p.ly || 0) < +t.yearFrom) return false;
+      if (t.yearTo && (p.fy || 9999) > +t.yearTo) return false;
+      return true;
     });
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    const links = g.edges.map((e) => ({ ...e, s: byId.get(e.source), t: byId.get(e.target) })).filter((l) => l.s && l.t);
-    const maxE = Math.max(1, ...links.map((l) => l.weight));
-    // A small force simulation: repulsion, springs on links, a pull to the centre.
-    const tick = (alpha) => {
-      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy || 1;
-        const min = a.r + b.r + 26, f = (alpha * 9000) / d2;
-        const d = Math.sqrt(d2);
-        dx /= d; dy /= d;
-        const push = f + (d < min ? (min - d) * 0.5 : 0);
-        a.vx -= dx * push; a.vy -= dy * push; b.vx += dx * push; b.vy += dy * push;
+  }
+
+  // node: {key, label, kind, color, children: Map, people: Set, person?}
+  function tnode(key, label, kind, color) { return { key, label, kind, color, children: new Map(), people: new Set() }; }
+  function addPath(root, segs, p, leafKey = "") {
+    let n = root;
+    n.people.add(p.i);
+    for (const s of segs) {
+      const key = `${n.key}/${s.kind}:${s.label}`;
+      if (!n.children.has(key)) n.children.set(key, tnode(key, s.label, s.kind, s.color));
+      n = n.children.get(key);
+      n.people.add(p.i);
+    }
+    const key = `${n.key}/p:${p.i}${leafKey}`;
+    if (!n.children.has(key)) { const leaf = tnode(key, p.name, "person", roleColor(p.roles[0])); leaf.person = p.i; n.children.set(key, leaf); }
+    n.children.get(key).people.add(p.i);
+    return n.children.get(key);
+  }
+  const locSegs = (p) => {
+    const where = placeOf(p);
+    if (!where) return [{ kind: "region", label: "Location not stated", color: "--c9" }];
+    if (where === "Abroad") return [{ kind: "region", label: "Abroad", color: "--c5" }, { kind: "country", label: p.country, color: "--c5" }];
+    return [{ kind: "region", label: where, color: "--c3" }, { kind: "province", label: p.province, color: "--c3" },
+      ...(p.city ? [{ kind: "city", label: p.city, color: "--c3" }] : [])];
+  };
+
+  function buildTree(dir, people) {
+    const root = tnode("root", "IM community", "root", "--c1");
+    const v = TREE.view;
+    const shown = TREE.roles.size ? (r) => TREE.roles.has(r) : () => true;
+    if (v === "role") {
+      for (const p of people) for (const r of p.roles.filter(shown)) {
+        const g = ROLE_GROUP[r];
+        addPath(root, [{ kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }, ...locSegs(p)], p);
       }
-      for (const l of links) {
-        const dx = l.t.x - l.s.x, dy = l.t.y - l.s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
-        const want = 120 + l.s.r + l.t.r, f = ((d - want) / d) * 0.03 * alpha * (0.5 + l.weight / maxE);
-        l.s.vx += dx * f; l.s.vy += dy * f; l.t.vx -= dx * f; l.t.vy -= dy * f;
+    } else if (v === "place") {
+      for (const p of people) for (const r of p.roles.filter(shown)) {
+        const g = ROLE_GROUP[r];
+        addPath(root, [...locSegs(p), { kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }], p);
       }
-      for (const n of nodes) {
-        if (n.fixed) { n.vx = n.vy = 0; continue; }
-        n.vx += (W / 2 - n.x) * 0.004 * alpha; n.vy += (H / 2 - n.y) * 0.008 * alpha;
-        n.x = Math.max(n.r + 4, Math.min(W - n.r - 4, n.x + (n.vx *= 0.6)));
-        n.y = Math.max(n.r + 4, Math.min(H - n.r - 4, n.y + (n.vy *= 0.6)));
+    } else if (v === "study") {
+      for (const p of people) for (const r of p.roles.filter(shown)) {
+        const c = r.endsWith("MENTOR") ? p.study : r.endsWith("MENTEE") ? p.target : p.study || p.target;
+        const g = ROLE_GROUP[r];
+        addPath(root, [{ kind: "country", label: c || "Country not stated", color: c ? "--c5" : "--c9" },
+          { kind: "role", label: roleName(r), color: g.color }], p);
       }
+    } else if (v === "mentor") {
+      const keep = new Set(people.map((p) => p.i));
+      for (const [a, b, prog, year] of dir.pairs) {
+        if (!keep.has(a) && !keep.has(b)) continue;
+        const mentor = dir.people[a], mentee = dir.people[b];
+        const g = ROLE_GROUP[`${prog}_MENTOR`];
+        const segs = [{ kind: "group", label: g.key, color: g.color }, { kind: "year", label: String(year ?? "Year not stated"), color: "--c9" }];
+        const mn = addPath(root, segs, mentor);
+        mn.people.add(b);
+        root.people.add(b);
+        let n = root; for (const s of segs) { n = n.children.get(`${n.key}/${s.kind}:${s.label}`); n.people.add(b); }
+        const key = `${mn.key}/p:${b}`;
+        if (!mn.children.has(key)) { const leaf = tnode(key, mentee.name, "person", roleColor(`${prog}_MENTEE`)); leaf.person = b; leaf.people.add(b); mn.children.set(key, leaf); }
+      }
+    } else if (v === "event") {
+      const keep = new Set(people.map((p) => p.i));
+      dir.events.forEach((e) => {
+        for (const [k, label, color] of [["speakers", "Speakers", "--c2"], ["committee", "Committee", "--c6"], ["participants", "Participants", "--c2"]]) {
+          for (const pi of e[k]) if (keep.has(pi)) addPath(root, [{ kind: "year", label: String(e.year ?? "Year not stated"), color: "--c9" },
+            { kind: "event", label: e.name, color: "--c2" }, { kind: "erole", label, color }], dir.people[pi]);
+        }
+      });
+    }
+    return root;
+  }
+
+  const sortChildren = (n) => [...n.children.values()].sort((a, b) =>
+    (a.kind === "person") - (b.kind === "person") || (a.kind === "year" && b.kind === "year" ? b.label.localeCompare(a.label)
+      : a.kind === "person" ? a.label.localeCompare(b.label) : b.people.size - a.people.size || a.label.localeCompare(b.label)));
+
+  function layout(root) {
+    const out = [], edges = [];
+    let row = 0, maxDepth = 0;
+    const walk = (n, depth, parent) => {
+      maxDepth = Math.max(maxDepth, depth);
+      const item = { n, depth, x: PAD + depth * COL, parent, kids: [] };
+      out.push(item);
+      const open = TREE.expanded.has(n.key) && n.children.size;
+      if (open) {
+        const kids = sortChildren(n);
+        const cap = TREE.caps.get(n.key) || CAP;
+        const people = kids.filter((k) => k.kind === "person");
+        const shown = kids.filter((k) => k.kind !== "person").concat(people.slice(0, cap));
+        for (const k of shown) item.kids.push(walk(k, depth + 1, item));
+        if (people.length > cap) {
+          const more = { key: `${n.key}/more`, label: `+ ${fmtInt(people.length - cap)} more`, kind: "more", color: "--c9", children: new Map(), people: new Set(), owner: n.key };
+          item.kids.push(walk(more, depth + 1, item));
+        }
+      }
+      if (item.kids.length) item.y = (item.kids[0].y + item.kids[item.kids.length - 1].y) / 2;
+      else item.y = PAD + NODE_H / 2 + row++ * ROW;
+      return item;
     };
-    for (let i = 0; i < 320; i++) tick(1 - i / 400);
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Network of roles, regions, countries and events">
-      <g class="g-links">${links.map((l, i) => `<line data-i="${i}" stroke-width="${(1 + 7 * l.weight / maxE).toFixed(1)}"><title>${esc(graphLabel(l.source))} ${esc(l.kind)} ${esc(graphLabel(l.target))}: ${fmtInt(l.weight)} people</title></line>`).join("")}</g>
-      <g class="g-nodes">${nodes.map((n, i) => `<g class="g-node" data-i="${i}"><circle r="${n.r.toFixed(1)}" fill="var(${GRAPH_COLORS[n.kind] || "--c9"})"><title>${esc(graphLabel(n.id))}: ${fmtInt(n.weight)} people</title></circle>
-        <text dy="${(n.r + 12).toFixed(1)}" text-anchor="middle">${esc(graphLabel(n.id))}</text></g>`).join("")}</g></svg>`;
-    const svg = el.querySelector("svg");
-    const lineEls = [...svg.querySelectorAll("line")], nodeEls = [...svg.querySelectorAll(".g-node")];
-    const draw = () => {
-      links.forEach((l, i) => { const e = lineEls[i]; e.setAttribute("x1", l.s.x); e.setAttribute("y1", l.s.y); e.setAttribute("x2", l.t.x); e.setAttribute("y2", l.t.y); });
-      nodes.forEach((n, i) => nodeEls[i].setAttribute("transform", `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`));
+    walk(root, 0, null);
+    for (const it of out) if (it.parent) edges.push({ key: `e:${it.n.key}`, from: it.parent, to: it });
+    return { nodes: out, edges, width: PAD * 2 + maxDepth * COL + NODE_W + 40, height: PAD * 2 + Math.max(1, row) * ROW };
+  }
+
+  const elbow = (px, py, cx, cy) => {
+    const sx = px + NODE_W, mx = sx + (COL - NODE_W) / 2;
+    return `M${sx},${py}H${mx}V${cy}H${cx}`;
+  };
+  const truncate = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+  const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+
+  function nodeMarkup(it, dir) {
+    const n = it.n, open = TREE.expanded.has(n.key), canOpen = n.children.size > 0;
+    const sel = n.kind === "person" && TREE.selected === n.person;
+    if (n.kind === "more") {
+      return `<rect class="tn-box more" width="${NODE_W}" height="${NODE_H}" rx="16"/><text class="tn-label more" x="${NODE_W / 2}" y="${NODE_H / 2 + 4}" text-anchor="middle">${esc(n.label)}</text>`;
+    }
+    if (n.kind === "person") {
+      const p = dir.people[n.person];
+      const q = TREE.q.trim().toLowerCase();
+      const hit = q && p.name.toLowerCase().includes(q);
+      const sub = [p.city || p.province || (p.country !== "Indonesia" ? p.country : ""), p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+      return `<rect class="tn-box person ${sel ? "sel" : ""} ${hit ? "hit" : ""}" width="${NODE_W}" height="${NODE_H}" rx="16"/>
+        <circle cx="16" cy="${NODE_H / 2}" r="11" fill="var(${n.color})"/><text class="tn-ini" x="16" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
+        <text class="tn-label" x="33" y="${sub ? 13 : NODE_H / 2 + 4}">${esc(truncate(p.name, 25))}</text>
+        ${sub ? `<text class="tn-sub" x="33" y="25">${esc(truncate(sub, 32))}</text>` : ""}
+        ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
+    }
+    const count = fmtInt(n.people.size);
+    return `<rect class="tn-box group ${n.kind}" width="${NODE_W}" height="${NODE_H}" rx="7"/>
+      <rect class="tn-accent" width="4" height="${NODE_H - 12}" x="7" y="6" rx="2" fill="var(${n.color})"/>
+      <text class="tn-label" x="18" y="${NODE_H / 2 + 4}">${esc(truncate(n.label, n.kind === "root" ? 20 : 19))}</text>
+      <g transform="translate(${NODE_W - (canOpen ? 30 : 10)},${NODE_H / 2})"><text class="tn-count" text-anchor="end" y="4">${count}</text></g>
+      ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
+  }
+
+  function peopleTree(P) {
+    const d = D.people_directory;
+    if (!d) return `<div class="empty"><h2>No directory yet</h2><p class="muted">The tree needs <code>people_directory.json</code>: run the people job once more (with <code>publish_directory: true</code> in config/people.yml).</p></div>`;
+    return `<div class="tree-layout">
+      <aside class="card tree-filters" id="tree-filters"></aside>
+      <section class="tree-main">
+        <div class="card tree-toolbar" id="tree-toolbar"></div>
+        <div class="tree-stage card"><div class="tree-scroll" id="tree-scroll"><div id="ptree" role="tree" aria-label="People tree"></div></div>
+          <aside class="tree-detail" id="tree-detail" hidden aria-live="polite"></aside></div>
+      </section></div>`;
+  }
+
+  function mountTree(el) {
+    const dir = directoryPeople();
+    if (!dir) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    TREE.prev = new Map(); TREE.els = new Map();
+    const svgNS = "http://www.w3.org/2000/svg";
+    el.innerHTML = `<svg class="tree-svg"><g class="t-edges"></g><g class="t-nodes"></g></svg>`;
+    const svg = el.querySelector("svg"), gE = svg.querySelector(".t-edges"), gN = svg.querySelector(".t-nodes");
+    const years = [...new Set(dir.people.flatMap((p) => [p.fy, p.ly]).filter(Boolean))].sort();
+    const provinces = [...new Set(dir.people.map((p) => p.province).filter(Boolean))].sort();
+    const countries = [...new Set(dir.people.flatMap((p) => [p.study, p.target]).filter((c) => c && c !== "Indonesia"))].sort();
+    const regions = [...new Set(dir.people.map((p) => placeOf(p) || "Not stated"))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
+    let anim = null, layoutNow = null;
+
+    const drawFilters = () => {
+      const chip = (on, attr, val, label, color) => `<button type="button" class="fchip ${on ? "on" : ""}" ${attr}="${esc(val)}">${color ? `<i style="background:var(${color})"></i>` : ""}${esc(label)}</button>`;
+      const opt = (v, cur, label = v) => `<option value="${esc(v)}" ${String(cur) === String(v) ? "selected" : ""}>${esc(label)}</option>`;
+      const provs = TREE.regions.size ? provinces.filter((pv) => dir.people.some((p) => p.province === pv && TREE.regions.has(placeOf(p)))) : provinces;
+      $("#tree-filters").innerHTML = `
+        <div class="tf-search"><svg viewBox="0 0 16 16" width="14" height="14"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.5"/></svg>
+          <input id="tf-q" type="search" placeholder="Name, city, province, campus…" value="${esc(TREE.q)}" aria-label="Search people" autocomplete="off"></div>
+        <div id="tf-hits" class="tf-hits"></div>
+        <div class="tf-sec"><div class="tf-h">Role</div>${ROLE_GROUPS.map((g) => `<div class="tf-group"><div class="tf-gh">${esc(g.key)}</div><div class="fchips">${g.roles.map((r) => chip(TREE.roles.has(r), "data-role", r, roleName(r), g.color)).join("")}</div></div>`).join("")}</div>
+        <div class="tf-sec"><div class="tf-h">Lives in</div><div class="fchips">${regions.map((r) => chip(TREE.regions.has(r), "data-region", r, r)).join("")}</div>
+          <label class="tf-field"><span>Province</span><select id="tf-prov"><option value="">Any province</option>${provs.map((v) => opt(v, TREE.province)).join("")}</select></label>
+          <div class="seg">${[["any", "Anywhere"], ["id", "Indonesia"], ["abroad", "Abroad"]].map(([v, l]) => `<button type="button" data-lives="${v}" class="${TREE.lives === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
+        <div class="tf-sec"><div class="tf-h">Study</div><label class="tf-field"><span>Studied in or targets</span><select id="tf-country"><option value="">Any country</option>${countries.map((v) => opt(v, TREE.country)).join("")}</select></label></div>
+        <div class="tf-sec"><div class="tf-h">Activity</div>
+          <label class="tf-field"><span>Events attended</span><select id="tf-ev">${[[0, "Any"], [1, "1 or more"], [2, "2 or more"], [3, "3 or more"], [5, "5 or more"]].map(([v, l]) => opt(v, TREE.minEvents, l)).join("")}</select></label>
+          <label class="tf-check"><input type="checkbox" id="tf-mentored" ${TREE.mentored ? "checked" : ""}> Mentored someone</label>
+          <div class="tf-row"><label class="tf-field"><span>Active from</span><select id="tf-from"><option value="">Any</option>${years.map((y) => opt(y, TREE.yearFrom)).join("")}</select></label>
+          <label class="tf-field"><span>to</span><select id="tf-to"><option value="">Any</option>${years.map((y) => opt(y, TREE.yearTo)).join("")}</select></label></div></div>
+        <button type="button" class="btn btn-sm tf-reset" id="tf-reset">Reset filters</button>`;
+      const f = $("#tree-filters");
+      const changed = () => { TREE.auto = true; render(); drawFilters(); };
+      $$("[data-role]", f).forEach((b) => b.addEventListener("click", () => { const r = b.dataset.role; TREE.roles.has(r) ? TREE.roles.delete(r) : TREE.roles.add(r); changed(); }));
+      $$("[data-region]", f).forEach((b) => b.addEventListener("click", () => { const r = b.dataset.region; TREE.regions.has(r) ? TREE.regions.delete(r) : TREE.regions.add(r); TREE.province = ""; changed(); }));
+      $$("[data-lives]", f).forEach((b) => b.addEventListener("click", () => { TREE.lives = b.dataset.lives; changed(); }));
+      $("#tf-prov").addEventListener("change", (e) => { TREE.province = e.target.value; changed(); });
+      $("#tf-country").addEventListener("change", (e) => { TREE.country = e.target.value; changed(); });
+      $("#tf-ev").addEventListener("change", (e) => { TREE.minEvents = +e.target.value; changed(); });
+      $("#tf-mentored").addEventListener("change", (e) => { TREE.mentored = e.target.checked; changed(); });
+      $("#tf-from").addEventListener("change", (e) => { TREE.yearFrom = e.target.value; changed(); });
+      $("#tf-to").addEventListener("change", (e) => { TREE.yearTo = e.target.value; changed(); });
+      $("#tf-reset").addEventListener("click", () => {
+        Object.assign(TREE, { q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "" });
+        TREE.expanded = new Set(["root"]); TREE.selected = null;
+        const box = $("#tree-detail"); box.classList.remove("open"); box.hidden = true;
+        changed();
+      });
+      let timer = null;
+      const q = $("#tf-q");
+      q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { TREE.q = q.value; TREE.auto = true; render(); drawHits(); }, 160); });
+      drawHits();
     };
-    draw();
-    const focus = (n) => {
-      svg.classList.toggle("focus", !!n);
-      links.forEach((l, i) => lineEls[i].classList.toggle("on", !!n && (l.s === n || l.t === n)));
-      nodes.forEach((m, i) => nodeEls[i].classList.toggle("on", !!n && (m === n || links.some((l) => (l.s === n && l.t === m) || (l.t === n && l.s === m)))));
+
+    const drawHits = () => {
+      const box = $("#tf-hits");
+      if (!box) return;
+      if (!TREE.q.trim()) { box.innerHTML = ""; return; }
+      const hits = treeFilter(dir).slice(0, 6);
+      box.innerHTML = hits.length ? hits.map((p) => `<button type="button" data-hit="${p.i}"><span class="ini" style="background:var(${roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
+        <span><b>${esc(p.name)}</b><small>${esc([p.roles.map(roleName).join(", "), p.city || p.province || p.country].filter(Boolean).join(" · "))}</small></span></button>`).join("")
+        : `<p class="muted small">No one matches.</p>`;
+      $$("[data-hit]", box).forEach((b) => b.addEventListener("click", () => reveal(+b.dataset.hit)));
     };
-    let drag = null;
-    const pt = (e) => { const r = svg.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H }; };
-    nodeEls.forEach((ne, i) => {
-      ne.addEventListener("mouseenter", () => !drag && focus(nodes[i]));
-      ne.addEventListener("mouseleave", () => !drag && focus(null));
-      ne.addEventListener("pointerdown", (e) => { drag = nodes[i]; drag.fixed = true; ne.setPointerCapture(e.pointerId); focus(drag); });
-      ne.addEventListener("pointermove", (e) => { if (drag !== nodes[i]) return; const p = pt(e); drag.x = p.x; drag.y = p.y; for (let k = 0; k < 3; k++) tick(0.15); draw(); });
-      ne.addEventListener("pointerup", () => { if (drag) drag.fixed = false; drag = null; focus(null); });
-    });
+
+    const drawToolbar = (count, total) => {
+      const active = [TREE.q && `“${TREE.q}”`, ...[...TREE.roles].map(roleName), ...TREE.regions, TREE.province, TREE.lives !== "any" && (TREE.lives === "id" ? "In Indonesia" : "Abroad"),
+        TREE.country, TREE.minEvents && `${TREE.minEvents}+ events`, TREE.mentored && "Mentored someone", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
+      $("#tree-toolbar").innerHTML = `<div class="seg views">${TREE_VIEWS.map(([v, l]) => `<button type="button" data-view="${v}" class="${TREE.view === v ? "on" : ""}">${l}</button>`).join("")}</div>
+        <div class="tt-meta"><b>${fmtInt(count)}</b> <span class="muted">of ${fmtInt(total)} people</span>${active.length ? `<span class="tt-chips">${active.map((a) => `<span>${esc(a)}</span>`).join("")}</span>` : ""}</div>
+        <div class="tt-actions"><button type="button" class="btn btn-sm" data-act="collapse">Collapse</button><button type="button" class="btn btn-sm" data-act="level">Expand a level</button></div>`;
+      $$("[data-view]", $("#tree-toolbar")).forEach((b) => b.addEventListener("click", () => { TREE.view = b.dataset.view; TREE.expanded = new Set(["root"]); TREE.caps = new Map(); TREE.auto = true; render(); }));
+      $("[data-act=collapse]").addEventListener("click", () => { TREE.expanded = new Set(["root"]); TREE.auto = false; render(); });
+      $("[data-act=level]").addEventListener("click", () => {
+        const lay = layoutNow;
+        if (!lay) return;
+        const frontier = lay.nodes.filter((it) => it.n.children.size && !TREE.expanded.has(it.n.key) && it.n.kind !== "person");
+        frontier.slice(0, 60).forEach((it) => TREE.expanded.add(it.n.key));
+        TREE.auto = false; render();
+      });
+    };
+
+    // Expand everything when the filtered set is small, so search results show at once.
+    const autoExpand = (root, count) => {
+      if (!TREE.auto) return;
+      TREE.auto = false;
+      const filtered = TREE.q.trim() || TREE.roles.size || TREE.regions.size || TREE.province || TREE.lives !== "any" || TREE.country || TREE.minEvents || TREE.mentored || TREE.yearFrom || TREE.yearTo;
+      const limit = filtered && count <= 60 ? 99 : filtered && count <= 400 ? 3 : 1;
+      const walk = (n, depth) => { if (depth < limit && n.children.size) { TREE.expanded.add(n.key); n.children.forEach((c) => c.kind !== "person" && walk(c, depth + 1)); } };
+      walk(root, 0);
+    };
+
+    const render = () => {
+      const people = treeFilter(dir);
+      const root = buildTree(dir, people);
+      autoExpand(root, people.length);
+      const lay = layout(root);
+      layoutNow = lay;
+      drawToolbar(people.length, dir.people.length);
+      svg.setAttribute("width", lay.width); svg.setAttribute("height", lay.height);
+      svg.setAttribute("viewBox", `0 0 ${lay.width} ${lay.height}`);
+      animateTo(lay);
+    };
+
+    const animateTo = (lay) => {
+      if (anim) cancelAnimationFrame(anim.raf);
+      const next = new Map(lay.nodes.map((it) => [it.n.key, it]));
+      const from = new Map(TREE.prev);
+      // Entering nodes grow out of their parent's previous spot; leaving nodes shrink into their nearest visible ancestor.
+      const startOf = (it) => from.get(it.n.key) || (it.parent && (from.get(it.parent.n.key) || { x: it.parent.x, y: it.parent.y })) || { x: it.x, y: it.y };
+      for (const it of lay.nodes) {
+        let g = TREE.els.get(it.n.key);
+        if (!g) {
+          g = document.createElementNS(svgNS, "g");
+          g.setAttribute("class", `tn tn-${it.n.kind}`);
+          g.setAttribute("tabindex", "0");
+          g.setAttribute("role", "treeitem");
+          g.dataset.key = it.n.key;
+          g.style.opacity = "0";
+          gN.appendChild(g);
+          TREE.els.set(it.n.key, g);
+          const ln = document.createElementNS(svgNS, "path");
+          ln.setAttribute("class", "te");
+          ln.style.opacity = "0";
+          gE.appendChild(ln);
+          g._edge = ln;
+        }
+        g.innerHTML = nodeMarkup(it, dir);
+        g._it = it;
+        if (it.n.children.size) g.setAttribute("aria-expanded", TREE.expanded.has(it.n.key)); else g.removeAttribute("aria-expanded");
+        g.setAttribute("aria-label", `${it.n.label}${it.n.kind !== "person" && it.n.kind !== "more" ? `, ${it.n.people.size} people` : ""}`);
+      }
+      const leaving = [...TREE.els.entries()].filter(([k]) => !next.has(k)).map(([k, g]) => {
+        const old = from.get(k) || { x: 0, y: 0 };
+        let anc = k; while (anc.includes("/") && !next.has(anc)) anc = anc.slice(0, anc.lastIndexOf("/"));
+        const to = next.get(anc) || lay.nodes[0];
+        return { k, g, old, to };
+      });
+      const dur = reduce ? 0 : 380, t0 = performance.now();
+      const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+      const frame = (now) => {
+        const t = dur ? Math.min(1, (now - t0) / dur) : 1, e = ease(t);
+        const pos = new Map();
+        for (const it of lay.nodes) {
+          const s = startOf(it), x = s.x + (it.x - s.x) * e, y = s.y + (it.y - s.y) * e;
+          pos.set(it.n.key, { x, y });
+          const g = TREE.els.get(it.n.key);
+          g.setAttribute("transform", `translate(${x.toFixed(1)},${(y - NODE_H / 2).toFixed(1)})`);
+          if (!from.has(it.n.key)) g.style.opacity = String(e);
+          else g.style.opacity = "1";
+        }
+        for (const it of lay.nodes) {
+          const g = TREE.els.get(it.n.key), ln = g._edge;
+          if (!it.parent) { ln.setAttribute("d", ""); continue; }
+          const a = pos.get(it.parent.n.key), b = pos.get(it.n.key);
+          ln.setAttribute("d", elbow(a.x, a.y, b.x, b.y));
+          ln.style.opacity = from.has(it.n.key) ? "1" : String(e);
+        }
+        for (const l of leaving) {
+          const x = l.old.x + (l.to.x - l.old.x) * e, y = l.old.y + (l.to.y - l.old.y) * e;
+          l.g.setAttribute("transform", `translate(${x.toFixed(1)},${(y - NODE_H / 2).toFixed(1)})`);
+          l.g.style.opacity = String(1 - e); l.g._edge.style.opacity = String(1 - e);
+        }
+        if (t < 1) { anim.raf = requestAnimationFrame(frame); return; }
+        for (const l of leaving) { l.g._edge.remove(); l.g.remove(); TREE.els.delete(l.k); }
+        TREE.prev = new Map(lay.nodes.map((it) => [it.n.key, { x: it.x, y: it.y }]));
+        anim = null;
+      };
+      anim = { raf: requestAnimationFrame(frame) };
+    };
+
+    const toggle = (g) => {
+      const it = g._it;
+      if (!it) return;
+      if (it.n.kind === "more") { TREE.caps.set(it.n.owner, (TREE.caps.get(it.n.owner) || CAP) + 200); render(); return; }
+      if (it.n.kind === "person") { showPerson(it.n.person); if (!it.n.children.size) return; }
+      if (!it.n.children.size) return;
+      TREE.expanded.has(it.n.key) ? collapse(it.n.key) : TREE.expanded.add(it.n.key);
+      render();
+      keepInView(it);
+    };
+    const collapse = (key) => { for (const k of [...TREE.expanded]) if (k === key || k.startsWith(`${key}/`)) TREE.expanded.delete(k); };
+    const keepInView = (it) => {
+      const sc = $("#tree-scroll");
+      const left = it.x - 40, right = it.x + COL + NODE_W;
+      if (right > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: Math.max(0, right - sc.clientWidth + 20), behavior: reduce ? "auto" : "smooth" });
+      else if (left < sc.scrollLeft) sc.scrollTo({ left: Math.max(0, left), behavior: reduce ? "auto" : "smooth" });
+    };
+    gN.addEventListener("click", (e) => { const g = e.target.closest(".tn"); if (g) toggle(g); });
+    gN.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.closest(".tn")) { e.preventDefault(); toggle(e.target.closest(".tn")); } });
+
+    // Open the path to one person in the current view and select them.
+    const reveal = (pi) => {
+      const p = dir.people[pi];
+      TREE.q = ""; const q = $("#tf-q"); if (q) q.value = "";
+      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "" });
+      if (TREE.view === "mentor" && !dir.mentees.has(pi) && !dir.mentors.has(pi)) TREE.view = "role";
+      if (TREE.view === "event" && !dir.eventsOf.has(pi)) TREE.view = "role";
+      const root = buildTree(dir, treeFilter(dir));
+      const path = [];
+      const find = (n, trail) => { if (n.person === pi) { path.push(...trail); return true; } for (const c of sortChildren(n)) if (c.people.has(pi) && find(c, [...trail, n])) return true; return false; };
+      find(root, []);
+      path.forEach((n) => { TREE.expanded.add(n.key); const people = [...n.children.values()].filter((c) => c.kind === "person").sort((a, b) => a.label.localeCompare(b.label)); const at = people.findIndex((c) => c.person === pi); if (at >= (TREE.caps.get(n.key) || CAP)) TREE.caps.set(n.key, at + 10); });
+      TREE.auto = false;
+      drawFilters();
+      render();
+      showPerson(pi);
+      setTimeout(() => { const g = [...TREE.els.values()].find((x) => x._it?.n.person === pi); if (g) { const it = g._it; const sc = $("#tree-scroll"); sc.scrollTo({ left: Math.max(0, it.x - 200), top: Math.max(0, it.y - sc.clientHeight / 2), behavior: reduce ? "auto" : "smooth" }); g.focus({ preventScroll: true }); } }, reduce ? 0 : 420);
+    };
+
+    const showPerson = (pi) => {
+      TREE.selected = pi;
+      const p = dir.people[pi], box = $("#tree-detail");
+      const link = (i, extra = "") => `<button type="button" class="linkish" data-person="${i}">${esc(dir.people[i].name)}</button>${extra}`;
+      const mentees = dir.mentees.get(pi) || [], mentors = dir.mentors.get(pi) || [], evs = dir.eventsOf.get(pi) || [];
+      box.innerHTML = `<header><span class="ini lg" style="background:var(${roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
+          <div><h3>${esc(p.name)}</h3><div class="muted small">${esc([p.city, p.province, p.region].filter(Boolean).join(", ") || (p.country && p.country !== "Indonesia" ? `Lives in ${p.country}` : "Location not stated"))}</div></div>
+          <button type="button" class="icon-btn" id="td-close" aria-label="Close">✕</button></header>
+        <div class="td-roles">${p.roles.map((r) => `<span class="rchip" style="--rc:var(${roleColor(r)})">${esc(roleName(r))}</span>`).join("")}</div>
+        <dl class="kv">
+          ${p.study ? `<dt>Studied in</dt><dd>${esc(p.study)}</dd>` : ""}${p.target ? `<dt>Wants to study in</dt><dd>${esc(p.target)}</dd>` : ""}
+          ${p.inst ? `<dt>Institution</dt><dd>${esc(p.inst)}</dd>` : ""}
+          <dt>Active</dt><dd>${p.fy ? `${p.fy}${p.ly && p.ly !== p.fy ? `–${p.ly}` : ""}` : "–"}</dd>
+          <dt>Events</dt><dd>${fmtInt(p.ev || 0)} attended${p.sp ? ` · spoke at ${fmtInt(p.sp)}` : ""}</dd>
+          ${mentees.length ? `<dt>Mentored</dt><dd>${mentees.map((m) => link(m.i, ` <span class="muted small">${m.prog === "PHD" ? "PhD" : "Master"} ${m.year ?? ""}</span>`)).join("<br>")}</dd>` : ""}
+          ${mentors.length ? `<dt>Mentor${mentors.length > 1 ? "s" : ""}</dt><dd>${mentors.map((m) => link(m.i, ` <span class="muted small">${m.prog === "PHD" ? "PhD" : "Master"} ${m.year ?? ""}</span>`)).join("<br>")}</dd>` : ""}
+        </dl>
+        ${evs.length ? `<div class="td-events"><div class="tf-h">Events</div><ul>${evs.slice(0, 12).map((x) => { const e = dir.events[x.ei]; return `<li>${esc(e.name)} <span class="muted small">${esc(e.year && !String(e.name).includes(String(e.year)) ? e.year : "")}${x.as !== "participants" ? ` · ${x.as === "speakers" ? "speaker" : "committee"}` : ""}</span></li>`; }).join("")}${evs.length > 12 ? `<li class="muted small">and ${evs.length - 12} more</li>` : ""}</ul></div>` : ""}`;
+      box.hidden = false;
+      requestAnimationFrame(() => box.classList.add("open"));
+      $("#td-close").addEventListener("click", () => { box.classList.remove("open"); TREE.selected = null; setTimeout(() => (box.hidden = true), 200); render(); });
+      $$("[data-person]", box).forEach((b) => b.addEventListener("click", () => reveal(+b.dataset.person)));
+      $$(".tn-box.person.sel", svg).forEach((r) => r.classList.remove("sel"));
+      const g = [...TREE.els.values()].find((x) => x._it?.n.person === pi);
+      g?.querySelector(".tn-box")?.classList.add("sel");
+    };
+
+    drawFilters();
+    render();
   }
 
   function peopleOverview(P) {
