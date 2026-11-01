@@ -466,3 +466,13 @@ a.cite:hover { background: var(--primary); color: #fff; text-decoration: none; }
 .ask-progress .bar { height: 6px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
 .ask-progress .bar span { display: block; height: 100%; width: 0; background: var(--primary); transition: width .3s; }
 @media (max-width: 900px) { .ask-bar { flex-wrap: wrap; } .ask-mode { order: 3; width: 100%; } }
+
+/* people dataset */
+.stack { display: grid; gap: 6px; }
+.stack-row { display: grid; grid-template-columns: 44px 1fr 48px; align-items: center; gap: 8px; font-size: 12px; }
+.stack-row .track { display: flex; height: 14px; background: var(--bg-subtle); border-radius: 3px; overflow: hidden; }
+.stack-row .n { text-align: right; font-variant-numeric: tabular-nums; }
+.stack-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+.stack-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+table.heat th, table.heat td { padding: 6px 8px; }
+table.heat thead th { white-space: normal; min-width: 64px; font-weight: 500; }

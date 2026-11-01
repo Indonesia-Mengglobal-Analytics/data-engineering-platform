@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       sql:
-        description: "One SELECT on bronze.*, silver.*, gold.* (DuckDB SQL)"
+        description: "One SELECT on bronze.*, silver.*, gold.*, people.* (DuckDB SQL)"
         required: true
       label:
         description: "Short name for the preview sheet"

@@ -63,7 +63,7 @@ jobs:
           BASE: ${{ steps.pages.outputs.base_url }}
         run: |
           mkdir -p previous
-          for f in catalog jobs governance dashboard; do
+          for f in catalog jobs governance dashboard people; do
             curl -fsSL "$BASE/data/$f.json" -o "previous/$f.json" || rm -f "previous/$f.json"
           done
           ls -la previous
@@ -78,6 +78,10 @@ jobs:
           ONLY_SOURCE: ${{ inputs.source }}
           PIPELINE_SCHEDULE: "17 */6 * * *"
         run: python pipeline/build.py
+
+      # people.json is written by people.yml; a Pages deploy replaces the whole site, so carry it forward.
+      - name: Keep the people dataset
+        run: if [ -f previous/people.json ]; then cp previous/people.json site/data/people.json; fi
 
       # The warehouse file holds row-level data: it is deleted, never uploaded.
       - name: Remove warehouse

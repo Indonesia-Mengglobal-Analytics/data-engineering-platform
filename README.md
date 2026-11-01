@@ -20,6 +20,7 @@ The site looks and works like a lakehouse workspace console:
 | Data Ingestion | Every sheet found: registered, rejected (with reasons) or unreachable, and the format to follow |
 | Dashboards | Per source: submissions per day, category charts, data quality |
 | Governance | Classification policy, withheld columns, consent coverage, rules |
+| People | The people dataset: roles, overlaps, journeys, anomalies, review list, sources, runs |
 
 ## Lakehouse: bronze, silver, gold
 
@@ -81,6 +82,40 @@ The Ask page searches it in the browser (BM25) and answers with one of two engin
 
 Without WebGPU or a key, Ask still shows the best-matching passages.
 
+## People dataset
+
+`.github/workflows/people.yml` (daily, manual, on changes to its files) builds one row per person from every
+mentorship (Master and PhD, mentee and mentor), event and management sheet listed in `config/people.yml`.
+
+```
+read ──> normalize ──> resolve ──> build ──> store ──> publish
+(Sheets  (emails, phones,  (merge by      (counts,     (people/*.parquet,  (people.json,
+ API)     names, years;     normalized     overlaps,    PEOPLE sheet)       encrypted)
+          flag anomalies)   email; queue   journeys)
+                            the unsure)
+```
+
+- **Person key:** the email, lowercased, with Gmail dots and `+tags` removed. `person_id` (`IMP-` + a hash of that key)
+  stays the same for that email in every run. The People tab shows the address the person typed most.
+- **Labels** follow the [Data-020] glossary: `PHD_MENTEE`, `PHD_MENTOR`, `EVENT_PARTICIPANT`, `EVENT_SPEAKER`,
+  `EVENT_COMMITTEE`, `MANAGEMENT_CANDIDATE`, `MANAGEMENT_MEMBER`, plus `MASTER_MENTEE` and `MASTER_MENTOR`, which mirror the PhD
+  labels until the glossary defines them. An activity is one person in one role, year and status.
+- **Not merged automatically**, following the 2025 duplicates report: same phone, same name, and mentor and mentee in
+  the same year. They go to the **Review** tab with a reason.
+- **Anomalies:** errors exclude the row (dummy or invalid email, missing email, dummy name); warnings keep it (broken or
+  placeholder phone, year outside the program, digits in the name, a source column named "dummy"); info notes duplicates
+  and cells with several phones.
+
+Outputs: `people.people`, `people.activities`, `people.records`, `people.anomalies`, `people.review` and `people.sources`
+in the lakehouse (queryable from the SQL editor), and the **PEOPLE** sheet in the Shared Drive's `outputs/` folder.
+The site gets counts only, with groups under 5 shown as "<5".
+
+A source the service account can't open shows as **unreachable** on People → Sources; share it as Viewer. To add a source,
+add an entry to `config/people.yml` with its spreadsheet ID, tab, label and status (`header_row` when the header is not row 1).
+
+The two workflows deploy to the same Pages site. Each downloads the files the other published and carries them forward.
+Run the main pipeline once before the first people run.
+
 ## Security model
 
 The repository and its Pages site are public, so:
@@ -133,6 +168,7 @@ pip install -r pipeline/requirements.txt pytest
 pytest -q tests                                   # contract, governance, encryption, end-to-end build
 python tests/fixtures/make_demo.py                # regenerate demo fixtures (made-up rows)
 SITE_PIN=123456789012 python pipeline/build.py --fixtures tests/fixtures
+SITE_PIN=123456789012 python pipeline/people_build.py --fixtures tests/fixtures/people --lakehouse build/people
 cd site && python -m http.server 8000             # open http://localhost:8000, PIN 123456789012
 ```
 

@@ -575,6 +575,14 @@ def main() -> int:
     else:
         outputs["knowledge"] = knowledge.build(outputs["catalog"], outputs["dashboard"], outputs["governance"],
                                                jobs, config["contract"])
+        # The people job publishes separately; keep its passages so Ask can still answer about people.
+        people_file = Path(os.environ.get("PREVIOUS_DIR") or "") / "people.json"
+        if os.environ.get("PREVIOUS_DIR") and people_file.exists():
+            try:
+                outputs["knowledge"]["passages"] = knowledge.with_people(
+                    outputs["knowledge"]["passages"], unseal(json.loads(people_file.read_text()), pin))
+            except Exception:
+                print("warning: could not add people passages to the knowledge base", file=sys.stderr)
     for name, payload in {**outputs, "jobs": jobs}.items():
         (out / f"{name}.json").write_text(json.dumps(sealer.seal(payload)))
     print(json.dumps({k: run.get(k) for k in ("status", "sources", "duration_s", "error")}))

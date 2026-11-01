@@ -3,7 +3,7 @@
     python pipeline/query.py --sql "SELECT * FROM silver.mentee_data WHERE is_current" --label "current mentees"
     python pipeline/query.py --cleanup-only
 
-Tables: bronze.<t>, silver.<t>, gold.<t>, gold.consolidated, gold.dq_issues (DuckDB SQL).
+Tables: bronze.<t>, silver.<t>, gold.<t>, gold.consolidated, gold.dq_issues, people.<t> (DuckDB SQL).
 Only one SELECT statement is allowed; file and network access are switched off before it runs.
 Previews land in the Shared Drive's previews/ folder and are deleted after preview_retention_hours.
 Started from GitHub Actions (query.yml), so only people with write access to the repository can run it.
@@ -38,6 +38,9 @@ class QueryError(Exception):
     pass
 
 
+PEOPLE_TABLES = ("people", "activities", "records", "anomalies", "review", "sources")
+
+
 def check_sql(con, sql: str) -> str:
     sql = sql.strip().rstrip(";").strip()
     if not sql:
@@ -64,6 +67,11 @@ def open_lakehouse(con, storage) -> list[str]:
     for name in ("consolidated", "dq_issues"):
         if lakehouse.load(con, storage, "gold", name):
             loaded.append(f"gold.{name}")
+    # Written by the people job (people_build.py).
+    con.execute("CREATE SCHEMA IF NOT EXISTS people")
+    for name in PEOPLE_TABLES:
+        if lakehouse.load(con, storage, "people", name):
+            loaded.append(f"people.{name}")
     if not loaded:
         raise QueryError("The lakehouse is empty: run the pipeline first.")
     return loaded

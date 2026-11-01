@@ -1,0 +1,174 @@
+# People dataset: one row per person across management, events and mentorship (PhD and master).
+#
+# Labels and lifecycle stages follow the team glossary "[Data-020] Extracted Metadata from Pilot
+# Governed Dataset Lifecycle" and the people data lifecycle diagrams (DEV/Data-022). The glossary
+# has no Master domain yet: MASTER_MENTOR / MASTER_MENTEE mirror the PhD labels until it does.
+#
+# Dedup rule (1-1 notes, 3 Jul 2026, and the 2025 duplicates report): the normalized email is the
+# person key. Rows that only share a phone number or a name are NOT merged automatically; they go
+# to the review queue for a person to decide (one person with two addresses).
+
+people:
+  min_year: 2015
+  # Activity output keeps only one row per person, label, year and status.
+  # Columns read from every source when present (first matching header wins, case-insensitive).
+  columns:
+    email: [email, email address, email_address]
+    full_name: [full_name, full name, name]
+    phone: [phone, whatsapp phone number, phone_number_whatsapp, whatsapp_phone_number]
+    year: [batch, year]
+    linkedin: [linkedin, linked_in]
+    birthday: [birthday, date of birth, date_of_birth]
+
+  sources:
+    # ---------------- Master mentorship (the regular IM Mentorship) ----------------
+    - key: all_time_mentee
+      title: "[DB] All Time Mentorship Profiling · Mentee"
+      spreadsheet_id: 1nHoX0NFpKD4XIthfgCQ9LU5GFb4B07WpX8UMLlCWfbs
+      tab: Mentee
+      label: MASTER_MENTEE
+      selected_column: is_selected_mentee
+    - key: all_time_mentor
+      title: "[DB] All Time Mentorship Profiling · Mentor"
+      spreadsheet_id: 1nHoX0NFpKD4XIthfgCQ9LU5GFb4B07WpX8UMLlCWfbs
+      tab: Mentor
+      label: MASTER_MENTOR
+      selected_column: is_selected_mentor
+    - key: mentee_new_2025
+      title: "Mentee_new_2025 · new consolidated"
+      spreadsheet_id: 1ShgeE1rjP6fIudaj-wYTvcO0mF7f7mzsy-wC33Az2zA
+      tab: new consolidated
+      label: MASTER_MENTEE
+      selected_column: is_selected_mentee
+    - key: mentor_new_2025
+      title: "Mentor_new_2025 · new consolidated"
+      spreadsheet_id: 1dDBuylmf6EgZgiN2Z24X6BXiJF5jIDMWTfXcGj2y2Y8
+      tab: new consolidated
+      label: MASTER_MENTOR
+      selected_column: is_selected_mentor
+    - key: mentee_2024
+      title: "Mentee_2024"
+      spreadsheet_id: 1VRdPrO-OPxSPKtaeuVEXfse-mEZha_F74-dAKLbaIB8
+      tab: Sheet1
+      label: MASTER_MENTEE
+      selected_column: is_selected_mentee
+    - key: mentor_legacy_2024
+      title: "mentor_legacy_2024"
+      spreadsheet_id: 1QNllf5nhFPagSc5Q_TGOpNvNaGn5P-YpdA3dur1_1yA
+      tab: Sheet1
+      label: MASTER_MENTOR
+      selected_column: is_selected_mentor
+    - key: pdb_mentee_form
+      title: "Participant Database · mentee_registration_form"
+      spreadsheet_id: 1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM
+      tab: mentee_registration_form
+      label: MASTER_MENTEE
+      selected_column: is_selected_mentee
+    - key: pdb_mentor_form
+      title: "Participant Database · mentor_registration_form"
+      spreadsheet_id: 1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM
+      tab: mentor_registration_form
+      label: MASTER_MENTOR
+      selected_column: is_selected_mentor
+
+    # ---------------- PhD mentorship (earlier: PhD Bootcamp) ----------------
+    - key: pdb_phd_mentee
+      title: "Participant Database · PhD_mentee (PhD Bootcamp registrations)"
+      spreadsheet_id: 1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM
+      tab: PhD_mentee
+      label: PHD_MENTEE
+      status: CANDIDATE
+    - key: phd_bootcamp_participant
+      title: "phd bootcamp · final_participant"
+      spreadsheet_id: 1jvWpB1M7uE18wRh0szgqimQptLI1AMqv2f66D_zR4zw
+      tab: final_participant
+      label: PHD_MENTEE
+      status: SELECTED
+      year: 2024
+    - key: phd_bootcamp_coach
+      title: "phd bootcamp · final_coach"
+      spreadsheet_id: 1jvWpB1M7uE18wRh0szgqimQptLI1AMqv2f66D_zR4zw
+      tab: final_coach
+      label: PHD_MENTOR
+      status: SELECTED
+      year: 2024
+    - key: phd_mentee_2026
+      title: "Mentee_Data_PhD_Mentorship_2026"
+      spreadsheet_id: 1LpvKvoXsVdYsUqtYHXK1GEubUw9uykE1RTIs2bHJaLI
+      tab: DATA
+      header_from_column_metadata: true
+      label: PHD_MENTEE
+      status: CANDIDATE
+      year: 2026
+    - key: phd_mentor_2026
+      title: "Mentor_Data_PhD_Mentorship_2026"
+      spreadsheet_id: 1hUpoba7UJ0qQgX10GWsYlNewfVILi44YgULhLHSM-wc
+      tab: DATA
+      header_from_column_metadata: true
+      label: PHD_MENTOR
+      status: CANDIDATE
+      year: 2026
+
+    # ---------------- Events ----------------
+    - key: pdb_event_participants
+      title: "Participant Database · event_participants"
+      spreadsheet_id: 1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM
+      tab: event_participants
+      year_column: event_date
+      event_column: event_name
+      # event_role value -> label and stage (anything else counts as a participant)
+      role_column: event_role
+      roles:
+        participant: {label: EVENT_PARTICIPANT, status: REGISTERED}
+        speaker: {label: EVENT_SPEAKER, status: CONFIRMED}
+        panelist: {label: EVENT_SPEAKER, status: CONFIRMED}
+        moderator: {label: EVENT_SPEAKER, status: CONFIRMED}
+        keynote speaker: {label: EVENT_SPEAKER, status: CONFIRMED}
+        management: {label: EVENT_COMMITTEE, status: CONFIRMED}
+      label: EVENT_PARTICIPANT
+      status: REGISTERED
+
+    # ---------------- Management ----------------
+    - key: mgmt_accepted
+      title: "[RAW] IM Management Team 2020 - 2025 · Accepted"
+      spreadsheet_id: 1XU3OVciel1WwKxwEQGj14X2J0Faxnw-wKRRTF7n6Rwc
+      tab: Accepted
+      header_row: 2
+      label: MANAGEMENT_MEMBER
+      status: ACTIVE
+    - key: mgmt_applied
+      title: "[RAW] IM Management Team 2020 - 2025 · Applied"
+      spreadsheet_id: 1XU3OVciel1WwKxwEQGj14X2J0Faxnw-wKRRTF7n6Rwc
+      tab: Applied
+      header_row: 2
+      label: MANAGEMENT_CANDIDATE
+      status: APPLIED
+    - key: mgmt_recruitment
+      title: "[RAW] IM Management Recruitment · ALL"
+      spreadsheet_id: 1I_5LpW_uq3hkDhbo-wxv8jex6GJnj0b63dWl0UAeCc8
+      tab: ALL
+      label: MANAGEMENT_CANDIDATE
+      status: APPLIED
+    - key: mgmt_selected
+      title: "[RAW] IM Management Team - SELECTED"
+      spreadsheet_id: 14957JP6j5OBdFC5rIorWzK31UuQSnmF3d1Lx2rLbXX0
+      tab: Sheet1
+      label: MANAGEMENT_MEMBER
+      status: SELECTED
+
+  # Known but not used, and why (shown on the People page).
+  not_used:
+    - {title: "keynote_speakers.csv", reason: "Only a phone column: no email or name to identify a person"}
+    - {title: "Participant Database · web_form_responses", reason: "Interest to contribute (mentor, speaker, writer), not a role yet; no glossary label"}
+    - {title: "Indonesia Mengglobal - Filtered People View (5 copies)", reason: "Earlier output of this dataset, not a source"}
+
+  labels:
+    PHD_MENTEE: {domain: PhD Mentorship, education_level: PhD, role: mentee}
+    PHD_MENTOR: {domain: PhD Mentorship, education_level: PhD, role: mentor}
+    MASTER_MENTEE: {domain: Master Mentorship, education_level: Master, role: mentee}
+    MASTER_MENTOR: {domain: Master Mentorship, education_level: Master, role: mentor}
+    EVENT_PARTICIPANT: {domain: Event, education_level: "", role: participant}
+    EVENT_SPEAKER: {domain: Event, education_level: "", role: speaker}
+    EVENT_COMMITTEE: {domain: Event, education_level: "", role: committee}
+    MANAGEMENT_CANDIDATE: {domain: Management, education_level: "", role: candidate}
+    MANAGEMENT_MEMBER: {domain: Management, education_level: "", role: member}

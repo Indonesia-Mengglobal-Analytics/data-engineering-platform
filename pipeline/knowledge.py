@@ -165,3 +165,48 @@ def build(catalog: dict, dashboard: dict, governance: dict, jobs: dict, contract
             "#/runs")
 
     return {"generated_at": catalog.get("generated_at") or date.today().isoformat(), "passages": passages}
+
+
+def people_passages(doc: dict) -> list[dict]:
+    """Passages about the people dataset (aggregates only, from site/data/people.json)."""
+    if not doc or "kpis" not in doc:
+        return []
+    k = doc["kpis"]
+    out = [{"kind": "people", "title": "People dataset: overview", "link": "#/people", "source": None, "text":
+            f"The people dataset combines {k['sources_read']} of {k['sources_configured']} sources (management, events, "
+            f"PhD and master mentorship). {k['records']} records were read; {k['excluded']} were excluded as dummy, test or "
+            f"unidentifiable; the rest resolve to {k['people']} unique people with {k['activities']} activities. "
+            f"{k['merged_records']} records were merged into existing people by normalized email. {k['multi_role']} people "
+            f"have more than one role. {k['review_items']} cases wait for manual review (same phone, same name, or mentor "
+            "and mentee in the same year): these are never merged automatically."}]
+    out.append({"kind": "people", "title": "People dataset: roles and lifecycle", "link": "#/people", "source": None, "text":
+                "People per role: " + "; ".join(
+                    f"{l['label']} ({l.get('domain', '')}): {'fewer than 5' if l['people'] is None else l['people']} people, "
+                    + ", ".join(f"{s} {'<5' if n is None else n}" for s, n in l["status"].items())
+                    for l in doc.get("labels", [])) + "."})
+    if doc.get("journeys"):
+        out.append({"kind": "people", "title": "People dataset: journeys between roles", "link": "#/people", "source": None,
+                    "text": "; ".join(f"{j['name']}: {'fewer than 5' if j['people'] is None else j['people']} people"
+                                      for j in doc["journeys"]) + "."})
+    if doc.get("anomalies"):
+        out.append({"kind": "people", "title": "People dataset: anomalies found", "link": "#/people", "source": None,
+                    "text": "Anomalies in the source rows: " + "; ".join(
+                        f"{a['rule']} ({a['severity']}, {a['action']}): {a['count']} rows - {a['description']}"
+                        for a in doc["anomalies"]) + "."})
+    if doc.get("sources"):
+        out.append({"kind": "people", "title": "People dataset: sources", "link": "#/people", "source": None,
+                    "text": "Sources: " + "; ".join(
+                        f"{s['title']} -> {s['label']}: {s['status']}"
+                        + (f", {s.get('rows', 0)} rows, {s.get('excluded', 0)} excluded" if s["status"] == "read" else f" ({s.get('error')})")
+                        for s in doc["sources"]) + "."})
+    return out
+
+
+def with_people(passages: list[dict], doc: dict) -> list[dict]:
+    """Replace the people passages in a knowledge base, keeping every other passage and its id."""
+    kept = [p for p in passages if p.get("kind") != "people"]
+    n = max([int(p["id"][1:]) for p in kept if str(p.get("id", "")).startswith("P") and p["id"][1:].isdigit()] or [0])
+    new = people_passages(doc)
+    for i, p in enumerate(new, start=1):
+        p["id"] = f"P{n + i}"
+    return kept + new

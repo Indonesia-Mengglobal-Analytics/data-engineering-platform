@@ -3,6 +3,16 @@
   "use strict";
 
   const FILES = ["catalog", "jobs", "governance", "dashboard"];
+  const OPTIONAL_FILES = ["people"];
+  const PEOPLE_JOB = "people_dataset";
+  const PEOPLE_TASKS = [
+    { key: "read", desc: "Read every people source in config/people.yml" },
+    { key: "normalize", desc: "Clean emails, phones, names, years; flag anomalies" },
+    { key: "resolve", desc: "Merge by normalized email; queue uncertain matches" },
+    { key: "build", desc: "Counts, overlaps and journeys (groups under 5 hidden)" },
+    { key: "store", desc: "people/*.parquet and the PEOPLE sheet" },
+    { key: "publish", desc: "Encrypt aggregates, deploy to Pages" },
+  ];
   const JOB_ID = "sheets_to_duckdb";
   const TASKS = [
     { key: "discover", desc: "List sheets in the Drive folder and config" },
@@ -76,6 +86,13 @@
     for (let i = 0; i < FILES.length; i++) {
       try { out[FILES[i]] = await unseal(envelopes[i], pin); } catch { throw new Error("pin"); }
     }
+    await Promise.all(OPTIONAL_FILES.map(async (f) => {
+      out[f] = null;
+      try {
+        const res = await fetch(`data/${f}.json?t=${stamp}`, { cache: "no-store" });
+        if (res.ok) out[f] = await unseal(await res.json(), pin);
+      } catch { /* not published yet */ }
+    }));
     return out;
   }
 
@@ -114,6 +131,7 @@
 
   // ---------- icons ----------
   const ICONS = {
+    people: '<circle cx="6" cy="5.5" r="2.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M1.8 13.5c.4-2.4 2.1-3.8 4.2-3.8s3.8 1.4 4.2 3.8M10.5 3.6a2.2 2.2 0 0 1 0 4.2M12 9.9c1.3.5 2 1.7 2.2 3.6" fill="none" stroke="currentColor" stroke-width="1.3"/>',
     home: '<path d="M2.5 7.5 8 3l5.5 4.5V13H10V9.5H6V13H2.5z" fill="none" stroke="currentColor" stroke-width="1.3"/>',
     catalog: '<ellipse cx="8" cy="4" rx="5" ry="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2" fill="none" stroke="currentColor" stroke-width="1.3"/>',
     jobs: '<rect x="2" y="2.5" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9.5" width="5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 6.5v5H9" fill="none" stroke="currentColor" stroke-width="1.3"/>',
@@ -212,7 +230,7 @@
     if (!D) return;
     const parts = location.hash.split("?")[0].replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
     const [page = "home", ...rest] = parts;
-    const pages = { home, catalog, jobs, runs: runsPage, ingestion, dashboards, governance, ask, quality: qualityPage, sql };
+    const pages = { home, catalog, jobs, runs: runsPage, ingestion, dashboards, governance, ask, quality: qualityPage, sql, people: peoplePage };
     const render = pages[page] || notFound;
     $$(".nav").forEach((a) => a.classList.toggle("active", a.dataset.route === (pages[page] ? page : "")));
     $("#content").innerHTML = render(...rest);
@@ -551,11 +569,24 @@
           <td class="nowrap">${esc(scheduleLabel())}</td>
           <td><span class="dots">${recent.map((r) => `<a class="dot ${esc(r.status)}" href="#/runs/${esc(r.run_id)}" title="${esc(r.status)} · ${esc(when(r.started_at))}"></a>`).join("")}</span></td>
           <td class="nowrap">${last ? esc(ago(last.finished_at)) : "–"}</td><td>${last ? badge(last.status) : "–"}</td><td>${runBtn()}</td></tr>
+        ${peopleJobRow()}
         ${sources().map((s) => `<tr><td>${icon("ingest")} <a href="#/ingestion">ingest_${esc(tableName(s) || slug(s.title))}</a><div class="muted small">${esc(s.title)}</div></td><td>Ingestion pipeline</td>
           <td class="nowrap">With ${JOB_ID}</td><td></td><td class="nowrap">${esc(ago(s.checked_at))}</td>
           <td>${badge(s.status, s.status === "registered" ? "Active" : cap(s.status))}</td><td>${s.status === "unreachable" ? "" : `<button class="btn btn-sm" data-run-now="${esc(s.id)}">${icon("play", 10)} Run</button>`}</td></tr>`).join("")}
       </tbody></table></div>`;
   }
+
+  function peopleJobRow() {
+    const P = D.people;
+    const rs = P?.runs || [];
+    const last = rs[0];
+    return `<tr><td>${icon("people")} <a href="#/people/runs"><b>${PEOPLE_JOB}</b></a><div class="muted small">${PEOPLE_TASKS.map((t) => t.key).join(" → ")}</div></td><td>Job</td>
+      <td class="nowrap">Scheduled (daily 01:41 UTC)</td>
+      <td><span class="dots">${rs.slice(0, 10).reverse().map((r) => `<a class="dot ${esc(r.status)}" href="#/people/runs/${esc(r.run_id)}" title="${esc(r.status)} · ${esc(when(r.started_at))}"></a>`).join("")}</span></td>
+      <td class="nowrap">${last ? esc(ago(last.finished_at)) : "never"}</td><td>${last ? badge(last.status) : `<span class="muted">Not run yet</span>`}</td>
+      <td><a class="btn btn-sm" href="${esc(peopleWorkflowUrl())}" target="_blank" rel="noopener">${icon("play", 10)} Run</a></td></tr>`;
+  }
+  const peopleWorkflowUrl = () => `${repoUrl()}/actions/workflows/people.yml`;
 
   function scheduleLabel() {
     const cron = D.jobs.workflow.schedule;
@@ -998,6 +1029,131 @@
       ${pts.map((p, i) => `<rect x="${L + i * step + (step - bw) / 2}" y="${y(p.count)}" width="${bw}" height="${H - B - y(p.count)}" rx="1.5" fill="var(--c1)"><title>${esc(p.date)}: ${p.count}</title></rect>
         ${i % every === 0 ? `<text x="${L + i * step + step / 2}" y="${H - 6}" text-anchor="middle">${esc(new Date(p.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }))}</text>` : ""}`).join("")}
     </svg>`;
+  }
+
+  // ---------- people dataset ----------
+  const SEV = { error: "fail", warn: "warn", info: "ok" };
+  const n5 = (n) => (n == null ? "<5" : fmtInt(n));
+  const REVIEW_INFO = {
+    same_email_different_names: "Same email, clearly different names. Shared or reused address?",
+    same_phone_similar_name: "Same phone and a similar name, different emails. Probably one person with two addresses.",
+    same_phone_different_name: "Same phone, different names. Shared family or office number?",
+    same_name_different_email: "Same full name, different emails and phones. Namesakes or a new address?",
+    mentor_and_mentee_same_year: "Mentor and mentee in the same year. Kept as two roles; check it is right.",
+  };
+
+  function peoplePage(tab = "overview", runId) {
+    const P = D.people;
+    const actions = `<a class="btn" href="${esc(peopleWorkflowUrl())}" target="_blank" rel="noopener">${icon("play", 12)} Run people job</a>`;
+    if (!P || !P.kpis) {
+      const failed = P?.runs?.[0];
+      return head("People dataset", "Mentees, mentors, event roles and management, one row per person.", actions) +
+        (failed ? `<div class="callout danger"><b>Last run ${esc(failed.status)}.</b> <code>${esc(failed.error || "")}</code></div>` : "") +
+        `<div class="empty"><h2>Not built yet</h2><p class="muted">Run <b>People dataset</b> in GitHub Actions once. It needs the service account to have access to the sources in <code>config/people.yml</code>.</p></div>`;
+    }
+    const tabs = [["overview", "Overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
+    const body = { overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
+    if (!body) return notFound();
+    const sheet = P.outputs?.sheet;
+    return head("People dataset", `One row per person across mentorship (Master and PhD), events and management. Built ${esc(ago(P.generated_at))}.`,
+      `${sheet?.url ? `<a class="btn" href="${esc(sheet.url)}" target="_blank" rel="noopener">${icon("sheet")} PEOPLE sheet</a> ` : ""}${actions}`) +
+      `<nav class="tabs">${tabs.map(([k, l]) => `<a href="#/people/${k}" class="${tab === k ? "active" : ""}">${l}</a>`).join("")}</nav>` + body(P, runId);
+  }
+
+  function yearTotal(y, domains) {
+    const sum = domains.reduce((a, d) => a + (y[d] || 0), 0);
+    const hidden = domains.some((d) => d in y && y[d] == null);
+    return hidden ? (sum ? `${fmtInt(sum)} +` : "<5") : fmtInt(sum);
+  }
+
+  function peopleOverview(P) {
+    const k = P.kpis;
+    const stat = (label, value, sub, href) => `<a class="card card-link stat" href="${href}"><div class="label">${label}</div><div class="value">${value}</div><div class="muted small">${sub}</div></a>`;
+    const domains = [...new Set(P.years.flatMap((y) => Object.keys(y).filter((x) => x !== "year")))];
+    const maxYear = Math.max(1, ...P.years.map((y) => domains.reduce((a, d) => a + (y[d] || 0), 0)));
+    const L = P.overlap.labels;
+    const maxCell = Math.max(1, ...P.overlap.matrix.flat().filter((v) => v != null));
+    return `
+      <div class="grid grid-4" style="margin-bottom:16px">
+        ${stat("People", fmtInt(k.people), `${fmtInt(k.multi_role)} with more than one role`, "#/people/overview")}
+        ${stat("Records read", fmtInt(k.records), `${k.sources_read} of ${k.sources_configured} sources read`, "#/people/sources")}
+        ${stat("Merged duplicates", fmtInt(k.merged_records), "Same person by normalized email", "#/people/overview")}
+        ${stat("Excluded", fmtInt(k.excluded), "Dummy, invalid or missing email", "#/people/anomalies")}
+        ${stat("To review", fmtInt(k.review_items), "Possible same person, not merged", "#/people/anomalies")}
+      </div>
+      ${k.sources_read < k.sources_configured ? `<div class="callout warn"><b>${k.sources_configured - k.sources_read} source${k.sources_configured - k.sources_read === 1 ? "" : "s"} not read.</b> Share them with the service account as Viewer; see <a href="#/people/sources">Sources</a>.</div>` : ""}
+      <div class="grid grid-2" style="margin-bottom:16px">
+        <div class="card"><h3>Roles (glossary labels)</h3><div class="sub muted small" style="margin-bottom:8px">An activity is one person in one role in one year, so a mentor of three batches has three.</div><div class="table-wrap"><table><thead><tr><th>Label</th><th>Domain</th><th class="num">People</th><th>Activities by status</th></tr></thead><tbody>
+          ${P.labels.map((l) => `<tr><td class="mono small">${esc(l.label)}</td><td>${esc(l.domain)}</td><td class="num">${n5(l.people)}</td>
+            <td class="small">${Object.entries(l.status).map(([s, n]) => `<span class="badge no-dot st-ok" style="margin:1px 2px 1px 0">${esc(s)} ${n5(n)}</span>`).join("")}</td></tr>`).join("")}
+        </tbody></table></div></div>
+        <div class="card"><h3>Journeys</h3><div class="sub muted small" style="margin-bottom:8px">People who held the first role in the same year as the second or earlier.</div>
+          ${hbar(P.journeys.map((j) => ({ value: j.name, count: j.people })), "--c3")}</div>
+      </div>
+      <div class="grid grid-2" style="margin-bottom:16px">
+        <div class="card"><h3>People per year and domain</h3><div class="sub muted small" style="margin-bottom:8px">A person counts once per domain per year.</div>
+          <div class="stack-legend small">${domains.map((d, i) => `<span><i style="background:var(${PALETTE[i % PALETTE.length]})"></i>${esc(d)}</span>`).join("")}</div>
+          <div class="stack">${P.years.map((y) => `<div class="stack-row"><span class="lbl">${esc(y.year)}</span><span class="track">${domains.map((d, i) => y[d] ? `<span style="width:${(100 * y[d]) / maxYear}%;background:var(${PALETTE[i % PALETTE.length]})" title="${esc(d)} ${esc(y.year)}: ${fmtInt(y[d])}"></span>` : "").join("")}</span>
+            <span class="n">${yearTotal(y, domains)}</span></div>`).join("")}</div>
+          ${P.years.some((y) => domains.some((d) => d in y && y[d] == null)) ? `<p class="muted small" style="margin:8px 0 0">"+" means a group under ${P.rules.min_group_size} is hidden in that year.</p>` : ""}</div>
+        <div class="card"><h3>Role combinations</h3><div class="sub muted small" style="margin-bottom:8px">Most common sets of roles one person holds. Sets under ${P.rules.min_group_size} people are not shown.</div>
+          ${hbar(P.combinations.map((c) => ({ value: c.labels, count: c.people })), "--c5")}</div>
+      </div>
+      <div class="card" style="margin-bottom:16px"><h3>Who holds two roles</h3><div class="sub muted small" style="margin-bottom:8px">People with the row label and the column label (diagonal: everyone with that label).</div>
+        <div class="table-wrap"><table class="heat"><thead><tr><th></th>${L.map((l) => `<th class="mono small" title="${esc(l)}">${esc(l.replace(/_/g, " ").toLowerCase())}</th>`).join("")}</tr></thead><tbody>
+          ${L.map((a, i) => `<tr><th class="mono small">${esc(a)}</th>${P.overlap.matrix[i].map((v) => `<td class="num" style="${v ? `background:color-mix(in srgb, var(--primary) ${Math.round(8 + 60 * v / maxCell)}%, transparent)` : ""}">${v === 0 ? `<span class="muted">0</span>` : n5(v)}</td>`).join("")}</tr>`).join("")}
+        </tbody></table></div></div>
+      <div class="card"><h3>How people are matched</h3><dl class="kv">
+        <dt>Person key</dt><dd>${esc(P.rules.key)}. <code>person_id</code> stays the same for that email in every run.</dd>
+        <dt>Never merged automatically</dt><dd>${P.rules.no_auto_merge.map(esc).join(", ")}. These go to the review list.</dd>
+        <dt>Privacy</dt><dd>Names, emails and phones stay in the lakehouse and the PEOPLE sheet. This page only shows counts; groups under ${P.rules.min_group_size} show as "&lt;${P.rules.min_group_size}".</dd>
+        <dt>Query</dt><dd><a href="${esc(sqlLink("SELECT label, activity_year, count(*) AS people FROM people.activities GROUP BY ALL ORDER BY 1, 2"))}">people.people, people.activities, people.anomalies, people.review</a> in the SQL editor.</dd></dl></div>`;
+  }
+
+  function peopleAnomalies(P) {
+    const review = Object.entries(P.review || {});
+    return `
+      <div class="card" style="margin-bottom:16px"><h3>Anomalies</h3><div class="sub muted small" style="margin-bottom:8px">Rows can have more than one. Errors are excluded from the dataset; warnings and info stay and are listed in the Anomalies tab of the PEOPLE sheet.</div>
+        <div class="table-wrap"><table><thead><tr><th>Rule</th><th>Severity</th><th>What it means</th><th>Action</th><th class="num">Rows</th><th>Where</th></tr></thead><tbody>
+        ${P.anomalies.map((a) => `<tr><td class="mono small">${esc(a.rule)}</td><td>${badge(SEV[a.severity] || "ok", a.severity)}</td><td>${esc(a.description)}</td><td>${esc(a.action)}</td><td class="num">${fmtInt(a.count)}</td>
+          <td class="small">${Object.entries(a.by_source).sort((x, y) => y[1] - x[1]).map(([s, n]) => `${esc(s)} <span class="muted">${fmtInt(n)}</span>`).join("<br>")}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No anomalies found.</td></tr>`}
+        </tbody></table></div></div>
+      <div class="card"><h3>Review list</h3><div class="sub muted small" style="margin-bottom:8px">Possible duplicates the pipeline did not merge. Open the Review tab of the PEOPLE sheet to see who; to merge, correct the email in the source sheet and the next run joins them.</div>
+        <div class="table-wrap"><table><thead><tr><th>Type</th><th>Why it is flagged</th><th class="num">Items</th></tr></thead><tbody>
+        ${review.map(([t, n]) => `<tr><td class="mono small">${esc(t)}</td><td>${esc(REVIEW_INFO[t] || "")}</td><td class="num">${fmtInt(n)}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">Nothing to review.</td></tr>`}
+        </tbody></table></div></div>`;
+  }
+
+  function peopleSources(P) {
+    const st = (s) => (s === "read" ? "ok" : s === "unreachable" ? "unreachable" : "warn");
+    return `
+      <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Source</th><th>Label</th><th>Status</th><th class="num">Rows</th><th class="num">Excluded</th><th>Columns used</th></tr></thead><tbody>
+      ${P.sources.map((s) => `<tr><td>${icon("sheet")} <a href="https://docs.google.com/spreadsheets/d/${esc(s.spreadsheet_id)}" target="_blank" rel="noopener">${esc(s.title)}</a><div class="muted small mono">${esc(s.key)}</div></td>
+        <td class="mono small">${esc(s.label)}</td><td>${badge(st(s.status), s.status)}${s.error ? `<div class="muted small" style="max-width:280px">${esc(s.error)}</div>` : ""}</td>
+        <td class="num">${fmtInt(s.rows)}</td><td class="num">${fmtInt(s.excluded)}</td>
+        <td class="small">${Object.entries(s.mapped_columns || {}).filter(([, v]) => v).map(([k, v]) => `<span class="nowrap"><code>${esc(k)}</code> ← ${esc(v)}</span>`).join(", ")}${(s.dummy_columns || []).length ? `<div style="color:var(--warning)">Dummy columns ignored: ${s.dummy_columns.map(esc).join(", ")}</div>` : ""}</td></tr>`).join("")}
+      </tbody></table></div>
+      <div class="card"><h3>Looked at, not used</h3><ul class="list-plain">${(P.not_used || []).map((n) => `<li><b>${esc(n.title)}</b>: <span class="muted">${esc(n.reason)}</span></li>`).join("")}</ul>
+        <p class="muted small" style="margin:8px 0 0">Sources and their column names are in <code>config/people.yml</code>. A sheet the service account can't open shows as <b>unreachable</b>.</p></div>`;
+  }
+
+  function peopleRuns(P, runId) {
+    const rs = P.runs || [];
+    if (runId) {
+      const r = rs.find((x) => String(x.run_id) === runId);
+      if (!r) return notFound();
+      return `<p><a href="#/people/runs">← All runs</a></p>
+        <div class="card" style="margin-bottom:16px"><h3>Run ${esc(r.run_number ? `#${r.run_number}` : r.run_id)} ${badge(r.status)}</h3>
+          <p class="muted small">${esc(triggerLabel(r.trigger))} by ${esc(r.actor)} · ${esc(when(r.started_at))} · ${dur(r.duration_s)}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">Logs on GitHub ${icon("ext", 12)}</a>` : ""}</p>
+          ${r.error ? `<div class="callout danger"><code>${esc(r.error)}</code><br><span class="muted small">The site kept the last good aggregates.</span></div>` : ""}
+          <div class="dag">${(r.tasks || []).map((t, i) => `${i ? '<div class="dag-edge"></div>' : ""}<div class="dag-node"><div class="k">${badge(t.status, "")} ${esc(t.key)}</div><div class="d">${esc(PEOPLE_TASKS.find((x) => x.key === t.key)?.desc || "")}<br>${t.duration_ms != null ? `${t.duration_ms.toLocaleString()} ms` : "not run"}${t.detail ? `<br><span style="color:var(--danger)">${esc(t.detail)}</span>` : ""}</div></div>`).join("")}</div></div>
+        ${r.summary ? `<div class="card"><h3>Summary</h3><dl class="kv">${Object.entries(r.summary).map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${fmtInt(v)}</dd>`).join("")}<dt>Storage</dt><dd>${esc(r.storage === "drive" ? "Shared Drive" : r.storage === "local" ? "this run only" : "–")}</dd></dl></div>` : ""}`;
+    }
+    return `<div class="dag" style="margin-bottom:16px">${PEOPLE_TASKS.map((t, i) => `${i ? '<div class="dag-edge"></div>' : ""}<div class="dag-node"><div class="k">${icon("jobs")} ${t.key}</div><div class="d">${esc(t.desc)}</div></div>`).join("")}</div>
+      ${rs.length ? `<div class="table-wrap"><table><thead><tr><th>Start time</th><th>Run</th><th>Status</th><th>Trigger</th><th>Run as</th><th class="num">People</th><th class="num">Excluded</th><th class="num">Review</th><th class="num">Duration</th></tr></thead><tbody>
+        ${rs.map((r) => `<tr><td class="nowrap"><a href="#/people/runs/${esc(r.run_id)}">${esc(when(r.started_at))}</a></td><td class="mono">${esc(r.run_number ? `#${r.run_number}` : r.run_id)}</td><td>${badge(r.status)}</td>
+          <td>${esc(triggerLabel(r.trigger))}</td><td>${esc(r.actor)}</td><td class="num">${fmtInt(r.summary?.people)}</td><td class="num">${fmtInt(r.summary?.excluded)}</td><td class="num">${fmtInt(r.summary?.review_items)}</td><td class="num">${dur(r.duration_s)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">No runs yet.</div>`}`;
   }
 
   function governance() {
@@ -1625,6 +1781,8 @@ ${passageBlock(passages) || "(no matching passages)"}`;
       ...sources().map((s) => ({ kind: "Source", label: s.title, href: "#/ingestion" })),
       ...Object.entries(D.dashboard.sources || {}).map(([id, d]) => ({ kind: "Dashboard", label: d.title, href: `#/dashboards/${id}` })),
       { kind: "Job", label: JOB_ID, href: `#/jobs/${JOB_ID}` },
+      { kind: "Job", label: PEOPLE_JOB, href: "#/people/runs" },
+      { kind: "Page", label: "People dataset", extra: "mentee mentor event management dedup anomalies", href: "#/people" },
       { kind: "Page", label: "Governance", href: "#/governance" },
       { kind: "Page", label: "Job Runs", href: "#/runs" },
       { kind: "Page", label: "Data Quality", href: "#/quality" },
