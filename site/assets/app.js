@@ -262,6 +262,8 @@
     if (askEl) mountAsk(askEl);
     const treeEl = $("#ptree");
     if (treeEl) mountTree(treeEl);
+    const linEl = $("#plineage");
+    if (linEl) mountLineage(linEl);
   }
 
   // ---------- pages ----------
@@ -1054,8 +1056,8 @@
         (failed ? `<div class="callout danger"><b>Last run ${esc(failed.status)}.</b> <code>${esc(failed.error || "")}</code></div>` : "") +
         `<div class="empty"><h2>Not built yet</h2><p class="muted">Run <b>People dataset</b> in GitHub Actions once. It needs the service account to have access to the sources in <code>config/people.yml</code>.</p></div>`;
     }
-    const tabs = [["gold", "People gold"], ["tree", "Tree"], ["overview", "Dedup overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
-    const body = { gold: peopleGold, tree: peopleTree, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
+    const tabs = [["gold", "People gold"], ["tree", "Tree"], ["lineage", "Lineage"], ["overview", "Dedup overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
+    const body = { gold: peopleGold, tree: peopleTree, lineage: peopleLineage, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
     if (!body) return notFound();
     const sheet = P.outputs?.sheet;
     return head("People dataset", `One row per person across mentorship (Master and PhD), events and management. Built ${esc(ago(P.generated_at))}.`,
@@ -1696,6 +1698,202 @@
 
     drawFilters();
     render();
+  }
+
+  // ---------- people lineage ----------
+  // Layered left-to-right DAG: sources -> tables -> outputs. Edges that skip columns get waypoints in the
+  // columns they cross (Sugiyama style), so lines run in empty lanes; every bend is a right angle.
+  const LIN_COLS = ["Sources", "Read", "Clean & merge", "Resolve & link", "Gold", "Build", "Store", "Shown in"];
+  const LIN_KIND = { source: "Sheet tab", table: "Table", step: "Step", store: "Storage", output: "Output" };
+  const LIN_COLOR = (n) => n.kind === "source" ? (n.group?.endsWith("_PAIRING") ? "--c10" : roleColor(n.group)) :
+    n.kind === "output" ? "--c3" : n.kind === "store" ? "--c5" : n.kind === "step" ? "--c9" : "--c1";
+  const LIN = { sel: null, col: "", hideOff: false, q: "", zoom: 1 };
+
+  function peopleLineage(P) {
+    const L = P.lineage;
+    if (!L) return `<div class="empty"><h2>No lineage yet</h2><p class="muted">Run the people job once more to build it.</p></div>`;
+    return `<div class="card lin-toolbar">
+        <div class="tf-search lin-search"><svg viewBox="0 0 16 16" width="14" height="14"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.5"/></svg>
+          <input id="lin-q" type="search" placeholder="Find a sheet, table or page…" aria-label="Find in lineage" autocomplete="off"></div>
+        <label class="tf-field lin-col"><span>Trace a gold column</span><select id="lin-col"><option value="">Choose a column…</option>
+          ${Object.keys(L.columns).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
+        <label class="tf-check"><input type="checkbox" id="lin-off"> Hide sources not read</label>
+        <button type="button" class="btn btn-sm" id="lin-reset">Clear</button>
+        <div class="seg lin-zoom" role="group" aria-label="Zoom"><button type="button" data-zoom="-" aria-label="Zoom out">−</button><button type="button" data-zoom="fit">Fit</button><button type="button" data-zoom="+" aria-label="Zoom in">+</button></div>
+        <span class="muted small lin-hint">Click any box to trace what feeds it and what it feeds.</span></div>
+      <div class="tree-stage card"><div class="tree-scroll lin-scroll" id="lin-scroll"><div id="plineage"></div></div>
+        <aside class="tree-detail" id="lin-detail" hidden aria-live="polite"></aside></div>`;
+  }
+
+  function mountLineage(el) {
+    const L = D.people?.lineage;
+    if (!L) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const NW = 214, NH = 40, GAP = 104, VG = 12, DG = 6, TOP = 44, LEFT = 20;
+    let first = true;
+
+    const draw = () => {
+      const nodes = L.nodes.filter((n) => !(LIN.hideOff && n.kind === "source" && n.status !== "read"))
+        .map((n) => ({ ...n, w: NW, h: NH, real: true }));
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      const edges = L.edges.filter((e) => byId.has(e.from) && byId.has(e.to));
+      // Waypoints for edges that skip columns.
+      const chains = edges.map((e) => {
+        const a = byId.get(e.from), b = byId.get(e.to), pts = [a];
+        for (let c = a.col + 1; c < b.col; c++) {
+          const d = { id: `d:${e.from}>${e.to}:${c}`, col: c, w: NW, h: 0, real: false };
+          nodes.push(d); byId.set(d.id, d); pts.push(d);
+        }
+        pts.push(b);
+        return { e, pts };
+      });
+      const ncol = Math.max(...nodes.map((n) => n.col)) + 1;
+      const cols = Array.from({ length: ncol }, (_, c) => nodes.filter((n) => n.col === c));
+      const preds = new Map(nodes.map((n) => [n.id, []])), succs = new Map(nodes.map((n) => [n.id, []]));
+      for (const { pts } of chains) for (let i = 0; i + 1 < pts.length; i++) { succs.get(pts[i].id).push(pts[i + 1]); preds.get(pts[i + 1].id).push(pts[i]); }
+      // Sources: grouped by label, read first.
+      const order = (x) => (x.status === "read" ? 0 : 1);
+      cols[0].sort((a, b) => order(a) - order(b) || String(a.group).localeCompare(String(b.group)) || a.label.localeCompare(b.label));
+      const stack = (col) => { let y = TOP; for (const n of col) { n.y = y + n.h / 2; y += n.h + (n.real ? VG : DG); } };
+      stack(cols[0]);
+      const place = (col, nb) => {
+        col.forEach((n) => { const ps = nb.get(n.id); n.want = ps.length ? ps.reduce((s, p) => s + p.y, 0) / ps.length : (n.y ?? TOP); });
+        col.sort((a, b) => a.want - b.want);
+        let last = -Infinity;
+        for (const n of col) { const min = last + (n.real ? VG : DG) + n.h / 2; n.y = Math.max(n.want, min, TOP + n.h / 2); last = n.y + n.h / 2; }
+      };
+      for (let c = 1; c < ncol; c++) place(cols[c], preds);
+      for (let c = ncol - 2; c >= 1; c--) place(cols[c], succs);
+      for (let c = 1; c < ncol; c++) place(cols[c], preds);
+      nodes.forEach((n) => (n.x = LEFT + n.col * (NW + GAP)));
+      // One vertical track per target in each gap: edges into the same box share it (a bus), so lines merge cleanly.
+      const tracks = new Map();
+      for (let c = 0; c + 1 < ncol; c++) {
+        const targets = cols[c + 1].filter((n) => preds.get(n.id).length).sort((a, b) => a.y - b.y);
+        targets.forEach((t, i) => tracks.set(t.id, LEFT + c * (NW + GAP) + NW + (GAP * (i + 1)) / (targets.length + 1)));
+      }
+      const pathOf = (pts) => {
+        let d = `M${pts[0].x + NW},${pts[0].y}`;
+        for (let i = 1; i < pts.length; i++) {
+          const t = pts[i], tx = tracks.get(t.id);
+          d += `H${tx}V${t.y}H${t.x}`;
+          if (!t.real) d += `H${t.x + NW}`;
+        }
+        return d;
+      };
+      const H = Math.max(...nodes.map((n) => n.y + n.h / 2)) + 30, W = LEFT + ncol * (NW + GAP) - GAP + 20;
+      const real = nodes.filter((n) => n.real);
+      const fmtC = (n) => (n.count == null ? "" : `${fmtInt(n.count)} ${n.unit || ""}`.trim());
+      LIN.W = W; LIN.H = H;
+      el.innerHTML = `<svg class="lin-svg" width="${W * LIN.zoom}" height="${H * LIN.zoom}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Lineage from sources to outputs">
+        ${LIN_COLS.slice(0, ncol).map((t, c) => `<text class="lin-colh" x="${LEFT + c * (NW + GAP)}" y="22">${esc(t.toUpperCase())}</text>`).join("")}
+        <g class="lin-edges">${chains.map(({ e, pts }, i) => `<path class="le" data-i="${i}" d="${pathOf(pts)}"><title>${esc(byId.get(e.from).label)} → ${esc(byId.get(e.to).label)}${e.count != null ? `: ${fmtInt(e.count)}` : ""}</title></path>`).join("")}</g>
+        <g class="lin-nodes">${real.map((n) => `<g class="ln ln-${n.kind} ${n.status !== "ok" && n.status !== "read" ? "off" : ""}" data-id="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}" transform="translate(${n.x},${n.y - NH / 2})" style="--d:${n.col}">
+          <rect class="ln-box" width="${NW}" height="${NH}" rx="${n.kind === "output" ? 20 : 8}"/>
+          <rect class="ln-accent" x="7" y="7" width="4" height="${NH - 14}" rx="2" fill="var(${LIN_COLOR(n)})"/>
+          <text class="ln-kind" x="18" y="14">${esc(truncate(n.kind === "source" ? (n.label.includes(" · ") ? n.label.split(" · ")[0] : "Sheet") : (LIN_KIND[n.kind] || n.kind), 30))}${n.status === "unreachable" ? " · not read" : n.status === "off" ? " · off" : ""}</text>
+          <text class="ln-label" x="18" y="29">${esc(truncate(n.kind === "source" && n.label.includes(" · ") ? n.label.split(" · ").slice(1).join(" · ") : n.label, fmtC(n) ? 22 : 28))}</text>
+          ${fmtC(n) ? `<text class="ln-count" x="${NW - 10}" y="29" text-anchor="end">${esc(fmtInt(n.count))}</text>` : ""}</g>`).join("")}</g></svg>`;
+
+      const svg = el.querySelector("svg"), paths = [...svg.querySelectorAll(".le")], gs = [...svg.querySelectorAll(".ln")];
+      if (first && !reduce) {
+        svg.classList.add("intro");
+        paths.forEach((p, i) => { const len = p.getTotalLength(); p.style.strokeDasharray = `${len}`; p.style.strokeDashoffset = `${len}`;
+          p.style.transitionDelay = `${0.15 + byId.get(chains[i].e.from).col * 0.16}s`; });
+        requestAnimationFrame(() => requestAnimationFrame(() => { svg.classList.add("go"); paths.forEach((p) => (p.style.strokeDashoffset = "0")); }));
+        setTimeout(() => paths.forEach((p) => { p.style.strokeDasharray = ""; p.style.transitionDelay = ""; }), 2600);
+      }
+      first = false;
+
+      // Highlight: everything upstream and downstream of the selected boxes.
+      const up = new Map(L.nodes.map((n) => [n.id, []])), down = new Map(L.nodes.map((n) => [n.id, []]));
+      edges.forEach((e) => { down.get(e.from).push(e.to); up.get(e.to).push(e.from); });
+      const reach = (start, nb) => { const seen = new Set(start), st = [...start]; while (st.length) for (const x of nb.get(st.pop()) || []) if (!seen.has(x)) { seen.add(x); st.push(x); } return seen; };
+      const highlight = (ids) => {
+        if (!ids) { svg.classList.remove("focus"); gs.forEach((g) => g.classList.remove("on", "sel")); paths.forEach((p) => p.classList.remove("on")); return; }
+        const lit = new Set([...reach(ids, up), ...reach(ids, down)]);
+        svg.classList.add("focus");
+        gs.forEach((g) => { g.classList.toggle("on", lit.has(g.dataset.id)); g.classList.toggle("sel", ids.includes(g.dataset.id)); });
+        paths.forEach((p, i) => { const e = chains[i].e; p.classList.toggle("on", lit.has(e.from) && lit.has(e.to)); });
+      };
+      const panel = $("#lin-detail");
+      const openPanel = (html) => { panel.innerHTML = html; panel.hidden = false; requestAnimationFrame(() => panel.classList.add("open"));
+        $("#lin-close", panel)?.addEventListener("click", () => { LIN.sel = null; LIN.col = ""; $("#lin-col").value = ""; panel.classList.remove("open"); setTimeout(() => (panel.hidden = true), 200); highlight(null); });
+        $$("[data-node]", panel).forEach((b) => b.addEventListener("click", () => selectNode(b.dataset.node, true)));
+        $$("[data-col]", panel).forEach((b) => b.addEventListener("click", () => selectColumn(b.dataset.col))); };
+      const inE = (id) => edges.filter((e) => e.to === id), outE = (id) => edges.filter((e) => e.from === id);
+      const nodeLink = (id) => { const n = L.nodes.find((x) => x.id === id); return n ? `<button type="button" class="linkish" data-node="${esc(id)}">${esc(n.label)}</button>` : esc(id); };
+      const scrollTo = (id) => {
+        const n = byId.get(id), sc = $("#lin-scroll");
+        if (!n || !sc) return;
+        const z = LIN.zoom, x = n.x * z, y = n.y * z;
+        if (x < sc.scrollLeft || x + NW * z > sc.scrollLeft + sc.clientWidth || y < sc.scrollTop || y > sc.scrollTop + sc.clientHeight)
+          sc.scrollTo({ left: Math.max(0, x - 120), top: Math.max(0, y - sc.clientHeight / 2), behavior: reduce ? "auto" : "smooth" });
+      };
+      const selectNode = (id, jump) => {
+        const n = L.nodes.find((x) => x.id === id);
+        if (!n) return;
+        if (jump) scrollTo(id);
+        LIN.sel = id; LIN.col = ""; $("#lin-col").value = "";
+        highlight([id]);
+        const cols = Object.entries(n.columns || {});
+        openPanel(`<header><span class="ini lg" style="background:var(${LIN_COLOR(n)})">${esc((LIN_KIND[n.kind] || "?")[0])}</span>
+            <div><h3>${esc(n.label)}</h3><div class="muted small">${esc(LIN_KIND[n.kind] || n.kind)}${n.count != null ? ` · ${fmtInt(n.count)} ${esc(n.unit || "")}` : ""}</div></div>
+            <button type="button" class="icon-btn" id="lin-close" aria-label="Close">✕</button></header>
+          <p class="small">${esc(n.desc || "")}</p>
+          ${n.url ? `<p><a class="lbtn" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${icon("ext", 11)} Open</a></p>` : ""}
+          ${inE(id).length ? `<div class="tf-h">Comes from</div><ul class="lin-list">${inE(id).map((e) => `<li>${nodeLink(e.from)}${e.count != null ? ` <span class="muted small">${fmtInt(e.count)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+          ${outE(id).length ? `<div class="tf-h">Feeds</div><ul class="lin-list">${outE(id).map((e) => `<li>${nodeLink(e.to)}${e.count != null ? ` <span class="muted small">${fmtInt(e.count)}</span>` : ""}</li>`).join("")}</ul>` : ""}
+          ${cols.length ? `<div class="tf-h">${n.kind === "source" ? "Columns used" : "Columns"}</div><ul class="lin-list cols">${cols.map(([k, v]) => n.kind === "source"
+            ? `<li><code>${esc(k)}</code> ← ${esc(v)}</li>` : `<li><button type="button" class="linkish" data-col="${esc(k)}">${esc(k)}</button><div class="muted small">${esc(v)}</div></li>`).join("")}</ul>` : ""}`);
+      };
+      const selectColumn = (col) => {
+        const c = L.columns[col];
+        if (!c) return;
+        LIN.col = col; LIN.sel = null; $("#lin-col").value = col;
+        const srcIds = [...new Set(c.feeds.map((f) => (L.nodes.some((n) => n.id === `src:${f.source}`) ? `src:${f.source}` : `pair:${f.source}`)))].filter((x) => byId.has(x));
+        highlight([...srcIds, "gold"]);
+        gs.forEach((g) => g.classList.toggle("on", g.classList.contains("on") && (srcIds.includes(g.dataset.id) || !g.dataset.id.startsWith("src:") && !g.dataset.id.startsWith("pair:"))));
+        paths.forEach((p, i) => { const e = chains[i].e; if (e.from.startsWith("src:") || e.from.startsWith("pair:")) p.classList.toggle("on", srcIds.includes(e.from)); });
+        const byField = {};
+        c.feeds.forEach((f) => (byField[f.field] ||= []).push(f));
+        openPanel(`<header><span class="ini lg" style="background:var(--c1)">C</span><div><h3>${esc(col)}</h3><div class="muted small">people.gold_people column</div></div>
+            <button type="button" class="icon-btn" id="lin-close" aria-label="Close">✕</button></header>
+          <p class="small"><b>Rule.</b> ${esc(c.rule)}</p>
+          ${Object.keys(byField).length ? Object.entries(byField).map(([field, fs]) => `<div class="tf-h">${esc(field)} ← ${fs.length} source${fs.length > 1 ? "s" : ""}</div>
+            <ul class="lin-list">${fs.map((f) => `<li>${nodeLink(L.nodes.some((n) => n.id === `src:${f.source}`) ? `src:${f.source}` : `pair:${f.source}`)}<div class="muted small">column “${esc(f.header)}”</div></li>`).join("")}</ul>`).join("")
+            : `<p class="muted small">No source has a column for this yet. Add its header to <code>config/people.yml</code> (attributes).</p>`}`);
+      };
+      gs.forEach((g) => {
+        g.addEventListener("click", () => selectNode(g.dataset.id));
+        g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectNode(g.dataset.id); } });
+        g.addEventListener("mouseenter", () => { if (!LIN.sel && !LIN.col) highlight([g.dataset.id]); });
+        g.addEventListener("mouseleave", () => { if (!LIN.sel && !LIN.col) highlight(null); });
+      });
+      if (LIN.sel && byId.has(LIN.sel)) selectNode(LIN.sel);
+      else if (LIN.col) selectColumn(LIN.col);
+      mountLineage.selectNode = selectNode; mountLineage.selectColumn = selectColumn; mountLineage.highlight = highlight; mountLineage.gs = gs;
+      mountLineage.scrollTo = scrollTo;
+    };
+
+    draw();
+    $("#lin-col").addEventListener("change", (e) => (e.target.value ? mountLineage.selectColumn(e.target.value) : $("#lin-reset").click()));
+    $("#lin-off").addEventListener("change", (e) => { LIN.hideOff = e.target.checked; draw(); });
+    $$("[data-zoom]").forEach((b) => b.addEventListener("click", () => {
+      const sc = $("#lin-scroll"), svg = el.querySelector("svg");
+      const z = b.dataset.zoom === "fit" ? Math.min(1, (sc.clientWidth - 8) / LIN.W, (sc.clientHeight - 8) / LIN.H) : LIN.zoom * (b.dataset.zoom === "+" ? 1.25 : 0.8);
+      LIN.zoom = Math.max(0.25, Math.min(1.6, z));
+      svg.setAttribute("width", LIN.W * LIN.zoom); svg.setAttribute("height", LIN.H * LIN.zoom);
+    }));
+    $("#lin-reset").addEventListener("click", () => { LIN.sel = null; LIN.col = ""; $("#lin-col").value = ""; $("#lin-q").value = "";
+      const pnl = $("#lin-detail"); pnl.classList.remove("open"); pnl.hidden = true; mountLineage.highlight(null); });
+    $("#lin-q").addEventListener("input", (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      if (!q) { mountLineage.highlight(null); return; }
+      const hits = L.nodes.filter((n) => n.label.toLowerCase().includes(q) || (n.group || "").toLowerCase().includes(q)).map((n) => n.id);
+      mountLineage.highlight(hits.length ? hits : null);
+      if (hits.length) mountLineage.scrollTo(hits[0]);
+    });
   }
 
   function peopleOverview(P) {

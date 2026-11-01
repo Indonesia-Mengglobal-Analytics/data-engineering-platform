@@ -579,3 +579,36 @@ table.heat thead th { white-space: normal; min-width: 64px; font-weight: 500; }
 .td-dups p { margin: 6px 0 0; font-size: 13px; }
 .td-merged { margin-top: 10px; padding: 10px; border-radius: 8px; background: var(--bg-subtle); }
 .td-merged p { margin: 6px 0 0; }
+
+/* people lineage */
+.lin-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; padding: 12px; margin-bottom: 12px; }
+.lin-search { min-width: 240px; flex: 1 1 240px; max-width: 340px; }
+.lin-col { min-width: 220px; }
+.lin-hint { margin-left: auto; align-self: center; }
+.lin-scroll { max-height: calc(100vh - 230px); }
+.lin-svg { display: block; }
+.lin-colh { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; fill: var(--text-muted); }
+.le { fill: none; stroke: color-mix(in srgb, var(--text-muted) 50%, transparent); stroke-width: 1.4; transition: stroke .2s, stroke-opacity .2s, stroke-width .2s; }
+.lin-svg.intro .le { transition: stroke-dashoffset .9s cubic-bezier(.4, 0, .2, 1); }
+.lin-svg.intro .ln { opacity: 0; transform-box: fill-box; }
+.lin-svg.intro.go .ln { opacity: 1; transition: opacity .45s ease calc(var(--d) * .16s); }
+.ln { cursor: pointer; outline: none; transition: opacity .2s; }
+.ln-box { fill: var(--bg); stroke: var(--border); filter: drop-shadow(0 1px 1.5px rgba(16, 24, 40, .08)); transition: stroke .15s; }
+.ln-output .ln-box { fill: color-mix(in srgb, var(--c3) 8%, var(--bg)); }
+.ln-store .ln-box { fill: color-mix(in srgb, var(--c5) 10%, var(--bg)); }
+.ln-step .ln-box { stroke-dasharray: 4 3; }
+.ln.off .ln-box { fill: var(--bg-subtle); stroke-dasharray: 3 3; }
+.ln.off .ln-label { fill: var(--text-muted); }
+.ln:hover .ln-box, .ln:focus-visible .ln-box { stroke: var(--primary); }
+.ln-kind { font-size: 9.5px; fill: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.ln-label { font-size: 12.5px; font-weight: 600; fill: var(--text); }
+.ln-count { font-size: 11.5px; font-weight: 600; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+.lin-svg.focus .ln { opacity: .28; }
+.lin-svg.focus .ln.on { opacity: 1; }
+.lin-svg.focus .ln.sel .ln-box { stroke: var(--primary); stroke-width: 2; }
+.lin-svg.focus .le { stroke-opacity: .12; }
+.lin-svg.focus .le.on { stroke: var(--primary); stroke-opacity: .85; stroke-width: 2; }
+.lin-list { margin: 6px 0 12px; padding-left: 16px; font-size: 13px; display: grid; gap: 4px; }
+.lin-list.cols { padding-left: 0; list-style: none; }
+@media (prefers-reduced-motion: reduce) { .le, .ln { transition: none !important; } }
+.lin-zoom button { min-width: 34px; }

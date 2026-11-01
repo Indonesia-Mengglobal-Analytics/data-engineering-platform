@@ -287,3 +287,35 @@ def test_directory_off_removes_the_file(tmp_path):
     assert res.returncode == 0, res.stderr
     assert not (out / "people_directory.json").exists()
     shutil.rmtree(tmp_path / "lake", ignore_errors=True)
+
+
+def test_lineage_is_a_left_to_right_dag_with_consistent_counts(gold_run):
+    _, doc, _ = gold_run
+    L = doc["lineage"]
+    nodes = {n["id"]: n for n in L["nodes"]}
+    assert all(e["from"] in nodes and e["to"] in nodes for e in L["edges"])
+    assert all(nodes[e["from"]]["col"] < nodes[e["to"]]["col"] for e in L["edges"])
+    # Every record comes from a source tab; every read source feeds the records.
+    into_records = [e for e in L["edges"] if e["to"] == "records"]
+    assert sum(e["count"] for e in into_records) == nodes["records"]["count"] == doc["kpis"]["records"]
+    assert {e["from"] for e in into_records} == {f"src:{s['key']}" for s in doc["sources"] if s["status"] == "read"}
+    assert nodes["gold"]["count"] == doc["kpis"]["people"] and nodes["mentorships"]["count"] == 21
+    # Every output is reachable from at least one source.
+    down = {}
+    for e in L["edges"]:
+        down.setdefault(e["from"], []).append(e["to"])
+    seen, stack = set(), [n for n in nodes if n.startswith(("src:", "pair:"))]
+    while stack:
+        for x in down.get(stack.pop(), []):
+            if x not in seen:
+                seen.add(x)
+                stack.append(x)
+    assert {n for n in nodes if n.startswith("out_")} <= seen
+    # Column lineage: every gold column has a rule; residence_province is fed by the residence columns of the sources.
+    assert all(c["rule"] for c in L["columns"].values())
+    feeds = {(f["source"], f["header"]) for f in L["columns"]["residence_province"]["feeds"]}
+    assert ("all_time_mentee", "current_residence") in feeds
+    assert ("pdb_phd_mentee", "Your Current Residency (Region)") in feeds
+    blob = json.dumps(L)
+    for leaked in ("@gmail", "+62812", "Dimas", "IMP-"):
+        assert leaked not in blob

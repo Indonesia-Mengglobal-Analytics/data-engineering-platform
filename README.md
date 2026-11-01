@@ -169,6 +169,24 @@ or research-profile link they gave us. Without one, a **Search LinkedIn** button
 name and campus: a suggestion for a team member to check, never stored. Profiles are not crawled or guessed. The tree reads `people_directory.json`, written only while
 `publish_directory: true` in `config/people.yml`.
 
+### Lineage
+
+**People → Lineage** maps the dataset from every Google Sheet tab to every place it is shown, with this run's counts:
+
+```
+Sources ─> Read ─> Clean & merge ─> Resolve & link ─> Gold ─> Build ─> Store ─> Shown in
+(sheet     people.  anomalies,        activities,       gold_    graph,   lakehouse  People pages, Tree,
+ tabs)     records  people, events    review, events,   people   site     (Parquet)  Ask, PEOPLE sheet,
+                                      mentorships                aggregates,         SQL editor
+                                                                 directory
+```
+
+The view is a layered left-to-right diagram with right-angle edges: links into one box share a vertical bus, and links
+that skip a column run through empty lanes, so no line crosses a box. Click a box to light up everything upstream and
+downstream and see its description, inputs, outputs and columns; pick a gold column ("Trace a gold column") to see the
+rule that builds it and the exact source headers that feed it. It is built by `pipeline/people_lineage.py` into
+`people.json` (counts and header names only).
+
 The two workflows deploy to the same Pages site. Each downloads the files the other published and carries them forward.
 Run the main pipeline once before the first people run.
 
