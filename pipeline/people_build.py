@@ -339,7 +339,7 @@ def main() -> int:
         built, links, pair_inventory = step("gold", gold)
         payload = step("build", aggregates, records, result, inventory, config["labels"], config)
         payload["gold"] = G.site_aggregates(built, links, pair_inventory, K)
-        directory = G.directory(built, links) if config.get("publish_directory") else None
+        directory = G.directory(built, links, result["review"]) if config.get("publish_directory") else None
 
         def store():
             write_tables(con, records, result, inventory)

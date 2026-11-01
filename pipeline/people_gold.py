@@ -96,6 +96,41 @@ class Places:
         return self.match(raw)["country"]
 
 
+LINKEDIN_RE = re.compile(r"(?:https?://)?(?:[a-z]{2,3}\.)?linkedin\.com/(in|pub|profile)/([^?#\s]+)", re.I)
+
+
+def linkedin_url(raw) -> str | None:
+    """A LinkedIn profile URL from what people typed (full URL, linkedin.com/in/x, or a bare handle)."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() in {"-", "n/a", "na", "none", "nan", "tidak ada", "belum ada", "0"}:
+        return None
+    m = LINKEDIN_RE.search(s)
+    if m:
+        kind, rest = m.group(1).lower(), m.group(2).strip("/")
+        return f"https://www.linkedin.com/{kind}/{rest.split('/')[0] if kind == 'in' else rest}"
+    handle = s.lstrip("@").strip("/")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-_%.]{2,99}", handle) and "." not in handle:
+        return f"https://www.linkedin.com/in/{handle}"
+    return None
+
+
+def web_url(raw) -> str | None:
+    """A plain http(s) link (research profile, website); anything else is dropped."""
+    if raw is None:
+        return None
+    s = str(raw).strip().split()[0] if str(raw).strip() else ""
+    if not s:
+        return None
+    if not re.match(r"https?://", s, re.I):
+        if re.match(r"(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(/\S*)?$", s, re.I):
+            s = "https://" + s
+        else:
+            return None
+    return s if re.match(r"https?://[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(/\S*)?$", s, re.I) else None
+
+
 def clean_label(raw) -> str | None:
     """Tidy free text for display and grouping (institutions, areas of study)."""
     if raw is None:
@@ -247,6 +282,10 @@ def build(records: list[P.Record], result: dict, mentorships: list[dict], places
         mentees_of[m["mentor_id"]].add(m["mentee_id"])
         mentors_of[m["mentee_id"]].add(m["mentor_id"])
 
+    review_of: dict[str, list[str]] = defaultdict(list)
+    for rv in result.get("review", []):
+        for rp in rv["person_ids"]:
+            review_of[rp].append(f"{rv['review_id']} {rv['type']}")
     gold = []
     for p in result["people"]:
         pid = p["person_id"]
@@ -265,6 +304,7 @@ def build(records: list[P.Record], result: dict, mentorships: list[dict], places
             home = places.match(res.get("residence_country"))
         residence_raw = ", ".join(str(res[f]).strip() for f in RESIDENCE_FIELDS if res.get(f))
         birth = places.match(a("birth_place"))
+        origin_country = places.country_of(a("origin_country")) or birth["country"]
         mentor_country = places.country_of(a("doctoral_country")) or places.country_of(a("master_country")) \
             or places.country_of(a("institution_country"))
         target_country = places.country_of(a("target_country"))
@@ -277,11 +317,16 @@ def build(records: list[P.Record], result: dict, mentorships: list[dict], places
             "person_id": pid, "full_name": p["full_name"], "email": p["email"], "phone": p["phone"], "linkedin": p["linkedin"],
             "primary_role": primary, "roles": ", ".join(sorted(labels)), "n_roles": len(labels), "selected_roles": ", ".join(selected),
             **{f"is_{lbl.lower()}": lbl in labels for lbl in ROLE_ORDER},
-            "first_year": p["first_year"], "last_year": p["last_year"], "years_active": len(p["years"]),
+            "first_year": p["first_year"], "last_year": p["last_year"],
+            # Years with IM: distinct years with any role; span counts from the first to the last year.
+            "years_with_im": len(p["years"]), "years_span": (p["last_year"] - p["first_year"] + 1) if p["first_year"] else 0,
+            "linkedin_url": linkedin_url(p["linkedin"]), "profile_url": web_url(a("profile_url")),
+            "email_variants": 1 + len(p["raw_emails"]), "review_ids": ", ".join(review_of.get(pid, [])),
             "residence_raw": residence_raw or None,
             "residence_city": home["city"], "residence_province": home["province"], "residence_island_region": home["island_region"],
             "residence_country": home["country"],
-            "birth_city": birth["city"], "birth_province": birth["province"], "birth_country": birth["country"],
+            "birth_city": birth["city"], "birth_province": birth["province"], "birth_island_region": birth["island_region"],
+            "birth_country": birth["country"], "origin_country": origin_country,
             "study_country": mentor_country, "study_world_region": places.world.get(mentor_country) if mentor_country else None,
             "target_country": target_country, "target_university": clean_label(a("target_university")),
             "institution": institution, "area_of_study": clean_label(a("area_of_study")),
@@ -491,10 +536,12 @@ def aggregate_graph(gold: list[dict], events: list[dict], mentorships: list[dict
 # ---------------------------------------------------------------- directory (tree view, names)
 
 DIRECTORY_FIELDS = ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
-                    "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had"]
+                    "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had",
+                    "birth_city", "birth_province", "birth_region", "origin_country", "years_with_im", "linkedin", "profile",
+                    "email_variants"]
 
 
-def directory(built: dict, mentorships: list[dict]) -> dict:
+def directory(built: dict, mentorships: list[dict], review: list[dict] | None = None) -> dict:
     """Names for the site's tree view, only when config people.publish_directory is true.
 
     Deliberately minimal: no email, phone, LinkedIn, birth date or birth place. People are referred to
@@ -505,7 +552,9 @@ def directory(built: dict, mentorships: list[dict]) -> dict:
     people = [[g["full_name"] or "(no name)", [r for r in ROLE_ORDER if g[f"is_{r.lower()}"]], g["residence_city"],
                g["residence_province"], g["residence_island_region"], g["residence_country"], g["study_country"],
                g["target_country"], g["institution"], g["first_year"], g["last_year"], g["events_attended"],
-               g["events_spoken"], g["mentees_mentored"], g["mentors_had"]] for g in gold]
+               g["events_spoken"], g["mentees_mentored"], g["mentors_had"], g["birth_city"], g["birth_province"],
+               g["birth_island_region"], g["origin_country"], g["years_with_im"], g["linkedin_url"], g["profile_url"],
+               g["email_variants"]] for g in gold]
     pairs = [[index[m["mentor_id"]], index[m["mentee_id"]], m["program"], m["year"]] for m in mentorships
              if m["mentor_id"] in index and m["mentee_id"] in index]
     events = []
@@ -513,5 +562,8 @@ def directory(built: dict, mentorships: list[dict]) -> dict:
         ids = e["_ids"]
         events.append([e["event_name"], e["event_year"], sorted(index[p] for p in ids["participants"] if p in index),
                        sorted(index[p] for p in ids["speakers"] if p in index), sorted(index[p] for p in ids["committee"] if p in index)])
-    return {"fields": DIRECTORY_FIELDS, "people": people, "mentorships": pairs, "events": events,
+    # Possible duplicates from the review queue: same phone, same name, or one email with different names.
+    duplicates = [[r["type"], [index[p] for p in r["person_ids"] if p in index], r["detail"]] for r in (review or [])]
+    duplicates = [d for d in duplicates if d[1]]
+    return {"fields": DIRECTORY_FIELDS, "people": people, "mentorships": pairs, "events": events, "duplicates": duplicates,
             "event_fields": ["name", "year", "participants", "speakers", "committee"]}

@@ -158,10 +158,15 @@ system asks for reduced motion), and long lists of people show 40 at a time. Fiv
 | Mentorship | Program → year → mentor → mentees |
 | Events | Year → event → speakers / committee / participants → people |
 | Study country | Country studied in (mentors) or targeted (mentees) → role → people |
+| Origin | Island region of birth (or born abroad → country) → province → city → role group → people |
+| Years with IM | 1 year / 2 years / 3–4 years / 5+ years (distinct years with any role) → role group → people |
+| Possible duplicates | Reason (same phone, same name, one email with different names, mentor and mentee in one year) → the people involved |
 
 Filters: search (name, city, province, region, country, institution), roles, region, province, Indonesia or abroad,
 study/target country, minimum events attended, mentored someone, active years. Clicking a person opens their roles,
-place, study, events, mentors and mentees (each clickable). The tree reads `people_directory.json`, written only while
+place, origin, years with IM, study, events, mentors, mentees and possible duplicates (each clickable), and the LinkedIn
+or research-profile link they gave us. Without one, a **Search LinkedIn** button opens a LinkedIn search for their
+name and campus: a suggestion for a team member to check, never stored. Profiles are not crawled or guessed. The tree reads `people_directory.json`, written only while
 `publish_directory: true` in `config/people.yml`.
 
 The two workflows deploy to the same Pages site. Each downloads the files the other published and carries them forward.
@@ -173,8 +178,9 @@ The repository and its Pages site are public, so:
 
 1. **Rows never reach this site, except the people directory.** With `publish_directory: true` (decided by the data
    team on 1 Nov 2026), `people_directory.json` holds each person's name, roles, city/province/region or country,
-   study and target country, institution, active years, events attended and mentees mentored, for the People → Tree view.
-   Never email, phone, LinkedIn or birth data. Set it to `false` to remove the file on the next run. Everything else lives only in Google: the source sheets, and the Shared Drive (lakehouse Parquet,
+   place of birth, study and target country, institution, years with IM, events attended, mentees mentored, the
+   LinkedIn or profile link they gave, and possible-duplicate pairs, for the People → Tree view. Never email, phone or
+   birth date. Set it to `false` to remove the file on the next run. Everything else lives only in Google: the source sheets, and the Shared Drive (lakehouse Parquet,
    output sheets, previews), where Drive sharing decides who can open them. The run's local DuckDB file is deleted at the
    end of the job, and only aggregates are published to Pages.
 2. **Personal and sensitive columns are dropped** before anything is counted (`config/platform.yml` → `governance.rules`).

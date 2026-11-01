@@ -40,13 +40,15 @@ STUDIED = [("United Kingdom", "University of Oxford", "Economics"), ("Netherland
 
 def mentee_row(p, year, sel, i=0):
     t = TARGET[i % len(TARGET)]
-    return [str(year), p[1], p[2], "TRUE" if sel else "FALSE", p[0], "", BIRTH[i % len(BIRTH)], "", "", "1/2/1998",
+    link = f"linkedin.com/in/{p[0].lower().replace(' ', '-')}-{i}" if i % 3 == 0 else ""  # invented handles
+    return [str(year), p[1], p[2], "TRUE" if sel else "FALSE", p[0], link, BIRTH[i % len(BIRTH)], "", "", "1/2/1998",
             RESIDENCE[i % len(RESIDENCE)], t[0], t[1], "Universitas Indonesia"]
 
 
 def mentor_row(p, year, sel, i=0):
     st = STUDIED[i % len(STUDIED)]
-    return [str(year), p[1], p[2], "TRUE" if sel else "FALSE", p[0], "", "Indonesia", st[0], st[1], st[2]]
+    link = f"https://www.linkedin.com/in/{p[0].lower().replace(' ', '')}{i}/" if i % 2 == 0 else ""  # invented handles
+    return [str(year), p[1], p[2], "TRUE" if sel else "FALSE", p[0], link, "Indonesia", st[0], st[1], st[2]]
 
 
 # ---- [DB] All Time Mentorship Profiling (Mentee / Mentor)

@@ -1161,12 +1161,20 @@
   const ROLE_GROUP = Object.fromEntries(ROLE_GROUPS.flatMap((g) => g.roles.map((r) => [r, g])));
   const roleColor = (r) => ROLE_GROUP[r]?.color || "--c9";
   const TREE_VIEWS = [
-    ["role", "By role"], ["place", "By place"], ["mentor", "Mentorship"], ["event", "Events"], ["study", "Study country"],
+    ["role", "By role"], ["place", "Lives in"], ["origin", "Origin"], ["years", "Years with IM"], ["mentor", "Mentorship"],
+    ["event", "Events"], ["study", "Study country"], ["dups", "Possible duplicates"],
   ];
+  const DUP_TYPES = {
+    same_phone_similar_name: "Same phone, similar name", same_phone_different_name: "Same phone, different name",
+    same_name_different_email: "Same name, different email", same_email_different_names: "One email, different names",
+    mentor_and_mentee_same_year: "Mentor and mentee in one year",
+  };
+  const YEAR_BUCKETS = [[1, 1, "1 year"], [2, 2, "2 years"], [3, 4, "3–4 years"], [5, 99, "5+ years"]];
+  const yearBucket = (n) => (YEAR_BUCKETS.find(([lo, hi]) => n >= lo && n <= hi) || [0, 0, "Year not stated"])[2];
   const TREE = {
     view: "role", q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0,
     mentored: false, yearFrom: "", yearTo: "", expanded: new Set(["root"]), caps: new Map(), selected: null,
-    prev: new Map(), els: new Map(), auto: true,
+    prev: new Map(), els: new Map(), auto: true, origin: "", minYears: 0, linked: false, dupOnly: false,
   };
   const NODE_W = 196, NODE_H = 32, COL = NODE_W + 64, ROW = 42, PAD = 24, CAP = 40;
   let DIR = null;
@@ -1179,8 +1187,10 @@
     const people = d.people.map((r, i) => {
       const p = { i, name: r[f.name], roles: r[f.roles], city: r[f.city], province: r[f.province], region: r[f.region],
         country: r[f.country], study: r[f.study_country], target: r[f.target_country], inst: r[f.institution],
-        fy: r[f.first_year], ly: r[f.last_year], ev: r[f.events_attended], sp: r[f.events_spoken], mm: r[f.mentees_mentored], mh: r[f.mentors_had] };
-      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, ...p.roles.map(roleName)]
+        fy: r[f.first_year], ly: r[f.last_year], ev: r[f.events_attended], sp: r[f.events_spoken], mm: r[f.mentees_mentored], mh: r[f.mentors_had],
+        bcity: r[f.birth_city], bprov: r[f.birth_province], bregion: r[f.birth_region], origin: r[f.origin_country],
+        yrs: r[f.years_with_im] || 0, li: r[f.linkedin], prof: r[f.profile], emv: r[f.email_variants] || 1 };
+      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, p.bcity, p.bprov, p.bregion, p.origin, ...p.roles.map(roleName)]
         .filter(Boolean).join(" · ").toLowerCase();
       return p;
     });
@@ -1197,11 +1207,23 @@
       if (!eventsOf.has(pi)) eventsOf.set(pi, []);
       eventsOf.get(pi).push({ ei, as: k });
     })));
-    DIR = { src: d, people, mentees, mentors, events, eventsOf, pairs: d.mentorships };
+    const dups = new Map();
+    (d.duplicates || []).forEach(([type, ids, detail], di) => ids.forEach((i) => {
+      if (!dups.has(i)) dups.set(i, []);
+      dups.get(i).push({ di, type, others: ids.filter((x) => x !== i), detail });
+    }));
+    DIR = { src: d, people, mentees, mentors, events, eventsOf, pairs: d.mentorships, dups, dupList: d.duplicates || [] };
     return DIR;
   }
 
   const placeOf = (p) => p.region ? p.region : p.country && p.country !== "Indonesia" ? "Abroad" : null;
+  const originOf = (p) => p.bregion || (p.origin && p.origin !== "Indonesia" ? "Abroad" : "Not stated");
+  const originSegs = (p) => {
+    if (p.bregion) return [{ kind: "region", label: p.bregion, color: "--c10" }, { kind: "province", label: p.bprov, color: "--c10" },
+      ...(p.bcity ? [{ kind: "city", label: p.bcity, color: "--c10" }] : [])];
+    if (p.origin && p.origin !== "Indonesia") return [{ kind: "region", label: "Born abroad", color: "--c5" }, { kind: "country", label: p.origin, color: "--c5" }];
+    return [{ kind: "region", label: "Origin not stated", color: "--c9" }];
+  };
 
   function treeFilter(dir) {
     const t = TREE, tokens = t.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -1217,6 +1239,10 @@
       if (t.mentored && !p.mm) return false;
       if (t.yearFrom && (p.ly || 0) < +t.yearFrom) return false;
       if (t.yearTo && (p.fy || 9999) > +t.yearTo) return false;
+      if (t.origin && originOf(p) !== t.origin) return false;
+      if (t.minYears && p.yrs < t.minYears) return false;
+      if (t.linked && !p.li && !p.prof) return false;
+      if (t.dupOnly && !dir.dups.has(p.i)) return false;
       return true;
     });
   }
@@ -1259,6 +1285,23 @@
         const g = ROLE_GROUP[r];
         addPath(root, [...locSegs(p), { kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }], p);
       }
+    } else if (v === "origin") {
+      for (const p of people) for (const r of p.roles.filter(shown)) {
+        const g = ROLE_GROUP[r];
+        addPath(root, [...originSegs(p), { kind: "group", label: g.key, color: g.color }], p);
+      }
+    } else if (v === "years") {
+      for (const p of people) for (const r of p.roles.filter(shown)) {
+        const g = ROLE_GROUP[r];
+        addPath(root, [{ kind: "years", label: yearBucket(p.yrs), color: "--c8" }, { kind: "group", label: g.key, color: g.color }], p);
+      }
+    } else if (v === "dups") {
+      const keep = new Set(people.map((p) => p.i));
+      dir.dupList.forEach(([type, ids], di) => {
+        if (!ids.some((i) => keep.has(i))) return;
+        const label = ids.map((i) => dir.people[i].name.split(/\s+/)[0]).join(" · ");
+        for (const i of ids) addPath(root, [{ kind: "dtype", label: DUP_TYPES[type] || type, color: "--c2" }, { kind: "pair", label: `${label} #${di + 1}`, color: "--c2" }], dir.people[i]);
+      });
     } else if (v === "study") {
       for (const p of people) for (const r of p.roles.filter(shown)) {
         const c = r.endsWith("MENTOR") ? p.study : r.endsWith("MENTEE") ? p.target : p.study || p.target;
@@ -1292,8 +1335,10 @@
     return root;
   }
 
+  const yearOrder = (l) => { const i = YEAR_BUCKETS.findIndex((b) => b[2] === l); return i < 0 ? 99 : i; };
   const sortChildren = (n) => [...n.children.values()].sort((a, b) =>
-    (a.kind === "person") - (b.kind === "person") || (a.kind === "year" && b.kind === "year" ? b.label.localeCompare(a.label)
+    (a.kind === "person") - (b.kind === "person") || (a.kind === "years" && b.kind === "years" ? yearOrder(a.label) - yearOrder(b.label)
+      : a.kind === "year" && b.kind === "year" ? b.label.localeCompare(a.label)
       : a.kind === "person" ? a.label.localeCompare(b.label) : b.people.size - a.people.size || a.label.localeCompare(b.label)));
 
   function layout(root) {
@@ -1341,11 +1386,15 @@
       const p = dir.people[n.person];
       const q = TREE.q.trim().toLowerCase();
       const hit = q && p.name.toLowerCase().includes(q);
-      const sub = [p.city || p.province || (p.country !== "Indonesia" ? p.country : ""), p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+      const sub = [p.city || p.province || (p.country && p.country !== "Indonesia" ? p.country : ""), p.yrs ? `${p.yrs} yr${p.yrs > 1 ? "s" : ""}` : "",
+        p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+      const dup = dir.dups.has(n.person);
       return `<rect class="tn-box person ${sel ? "sel" : ""} ${hit ? "hit" : ""}" width="${NODE_W}" height="${NODE_H}" rx="16"/>
         <circle cx="16" cy="${NODE_H / 2}" r="11" fill="var(${n.color})"/><text class="tn-ini" x="16" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
-        <text class="tn-label" x="33" y="${sub ? 13 : NODE_H / 2 + 4}">${esc(truncate(p.name, 25))}</text>
-        ${sub ? `<text class="tn-sub" x="33" y="25">${esc(truncate(sub, 32))}</text>` : ""}
+        <text class="tn-label" x="33" y="${sub ? 13 : NODE_H / 2 + 4}">${esc(truncate(p.name, 25 - (p.li ? 3 : 0) - (canOpen ? 3 : 0)))}</text>
+        ${sub ? `<text class="tn-sub" x="33" y="25">${esc(truncate(sub, 32 - (p.li ? 4 : 0) - (dup ? 2 : 0) - (canOpen ? 4 : 0)))}</text>` : ""}
+        ${dup ? `<circle class="tn-dup" cx="${NODE_W - (canOpen ? 30 : 12)}" cy="9" r="4"><title>Possible duplicate: see details</title></circle>` : ""}
+        ${p.li ? `<g class="tn-li" transform="translate(${NODE_W - (canOpen ? 36 : 18) - (dup ? 10 : 0)},${NODE_H / 2 + 1})"><rect x="-6" y="-6" width="12" height="12" rx="2.5"/><text y="3.2" text-anchor="middle">in</text></g>` : ""}
         ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
     }
     const count = fmtInt(n.people.size);
@@ -1379,6 +1428,7 @@
     const years = [...new Set(dir.people.flatMap((p) => [p.fy, p.ly]).filter(Boolean))].sort();
     const provinces = [...new Set(dir.people.map((p) => p.province).filter(Boolean))].sort();
     const countries = [...new Set(dir.people.flatMap((p) => [p.study, p.target]).filter((c) => c && c !== "Indonesia"))].sort();
+    const origins = [...new Set(dir.people.map(originOf))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
     const regions = [...new Set(dir.people.map((p) => placeOf(p) || "Not stated"))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
     let anim = null, layoutNow = null;
 
@@ -1394,10 +1444,15 @@
         <div class="tf-sec"><div class="tf-h">Lives in</div><div class="fchips">${regions.map((r) => chip(TREE.regions.has(r), "data-region", r, r)).join("")}</div>
           <label class="tf-field"><span>Province</span><select id="tf-prov"><option value="">Any province</option>${provs.map((v) => opt(v, TREE.province)).join("")}</select></label>
           <div class="seg">${[["any", "Anywhere"], ["id", "Indonesia"], ["abroad", "Abroad"]].map(([v, l]) => `<button type="button" data-lives="${v}" class="${TREE.lives === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
+        <div class="tf-sec"><div class="tf-h">Origin</div>
+          <label class="tf-field"><span>Born in</span><select id="tf-origin"><option value="">Anywhere</option>${origins.map((v) => opt(v, TREE.origin)).join("")}</select></label></div>
         <div class="tf-sec"><div class="tf-h">Study</div><label class="tf-field"><span>Studied in or targets</span><select id="tf-country"><option value="">Any country</option>${countries.map((v) => opt(v, TREE.country)).join("")}</select></label></div>
         <div class="tf-sec"><div class="tf-h">Activity</div>
           <label class="tf-field"><span>Events attended</span><select id="tf-ev">${[[0, "Any"], [1, "1 or more"], [2, "2 or more"], [3, "3 or more"], [5, "5 or more"]].map(([v, l]) => opt(v, TREE.minEvents, l)).join("")}</select></label>
+          <label class="tf-field"><span>Years with IM</span><select id="tf-years">${[[0, "Any"], [2, "2 or more"], [3, "3 or more"], [5, "5 or more"]].map(([v, l]) => opt(v, TREE.minYears, l)).join("")}</select></label>
           <label class="tf-check"><input type="checkbox" id="tf-mentored" ${TREE.mentored ? "checked" : ""}> Mentored someone</label>
+          <label class="tf-check"><input type="checkbox" id="tf-linked" ${TREE.linked ? "checked" : ""}> Has LinkedIn or profile link</label>
+          <label class="tf-check"><input type="checkbox" id="tf-dup" ${TREE.dupOnly ? "checked" : ""}> Possible duplicate</label>
           <div class="tf-row"><label class="tf-field"><span>Active from</span><select id="tf-from"><option value="">Any</option>${years.map((y) => opt(y, TREE.yearFrom)).join("")}</select></label>
           <label class="tf-field"><span>to</span><select id="tf-to"><option value="">Any</option>${years.map((y) => opt(y, TREE.yearTo)).join("")}</select></label></div></div>
         <button type="button" class="btn btn-sm tf-reset" id="tf-reset">Reset filters</button>`;
@@ -1410,10 +1465,15 @@
       $("#tf-country").addEventListener("change", (e) => { TREE.country = e.target.value; changed(); });
       $("#tf-ev").addEventListener("change", (e) => { TREE.minEvents = +e.target.value; changed(); });
       $("#tf-mentored").addEventListener("change", (e) => { TREE.mentored = e.target.checked; changed(); });
+      $("#tf-origin").addEventListener("change", (e) => { TREE.origin = e.target.value; changed(); });
+      $("#tf-years").addEventListener("change", (e) => { TREE.minYears = +e.target.value; changed(); });
+      $("#tf-linked").addEventListener("change", (e) => { TREE.linked = e.target.checked; changed(); });
+      $("#tf-dup").addEventListener("change", (e) => { TREE.dupOnly = e.target.checked; changed(); });
       $("#tf-from").addEventListener("change", (e) => { TREE.yearFrom = e.target.value; changed(); });
       $("#tf-to").addEventListener("change", (e) => { TREE.yearTo = e.target.value; changed(); });
       $("#tf-reset").addEventListener("click", () => {
-        Object.assign(TREE, { q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "" });
+        Object.assign(TREE, { q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "",
+          origin: "", minYears: 0, linked: false, dupOnly: false });
         TREE.expanded = new Set(["root"]); TREE.selected = null;
         const box = $("#tree-detail"); box.classList.remove("open"); box.hidden = true;
         changed();
@@ -1437,7 +1497,8 @@
 
     const drawToolbar = (count, total) => {
       const active = [TREE.q && `“${TREE.q}”`, ...[...TREE.roles].map(roleName), ...TREE.regions, TREE.province, TREE.lives !== "any" && (TREE.lives === "id" ? "In Indonesia" : "Abroad"),
-        TREE.country, TREE.minEvents && `${TREE.minEvents}+ events`, TREE.mentored && "Mentored someone", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
+        TREE.country, TREE.minEvents && `${TREE.minEvents}+ events`, TREE.mentored && "Mentored someone",
+        TREE.origin && `Born in ${TREE.origin}`, TREE.minYears && `${TREE.minYears}+ years with IM`, TREE.linked && "Has a link", TREE.dupOnly && "Possible duplicates", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
       $("#tree-toolbar").innerHTML = `<div class="seg views">${TREE_VIEWS.map(([v, l]) => `<button type="button" data-view="${v}" class="${TREE.view === v ? "on" : ""}">${l}</button>`).join("")}</div>
         <div class="tt-meta"><b>${fmtInt(count)}</b> <span class="muted">of ${fmtInt(total)} people</span>${active.length ? `<span class="tt-chips">${active.map((a) => `<span>${esc(a)}</span>`).join("")}</span>` : ""}</div>
         <div class="tt-actions"><button type="button" class="btn btn-sm" data-act="collapse">Collapse</button><button type="button" class="btn btn-sm" data-act="level">Expand a level</button></div>`;
@@ -1456,7 +1517,8 @@
     const autoExpand = (root, count) => {
       if (!TREE.auto) return;
       TREE.auto = false;
-      const filtered = TREE.q.trim() || TREE.roles.size || TREE.regions.size || TREE.province || TREE.lives !== "any" || TREE.country || TREE.minEvents || TREE.mentored || TREE.yearFrom || TREE.yearTo;
+      const filtered = TREE.q.trim() || TREE.roles.size || TREE.regions.size || TREE.province || TREE.lives !== "any" || TREE.country || TREE.minEvents || TREE.mentored || TREE.yearFrom || TREE.yearTo
+        || TREE.origin || TREE.minYears || TREE.linked || TREE.dupOnly || TREE.view === "dups";
       const limit = filtered && count <= 60 ? 99 : filtered && count <= 400 ? 3 : 1;
       const walk = (n, depth) => { if (depth < limit && n.children.size) { TREE.expanded.add(n.key); n.children.forEach((c) => c.kind !== "person" && walk(c, depth + 1)); } };
       walk(root, 0);
@@ -1580,7 +1642,8 @@
     const reveal = (pi) => {
       const p = dir.people[pi];
       TREE.q = ""; const q = $("#tf-q"); if (q) q.value = "";
-      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "" });
+      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "", origin: "", minYears: 0, linked: false, dupOnly: false });
+      if (TREE.view === "dups" && !dir.dups.has(pi)) TREE.view = "role";
       if (TREE.view === "mentor" && !dir.mentees.has(pi) && !dir.mentors.has(pi)) TREE.view = "role";
       if (TREE.view === "event" && !dir.eventsOf.has(pi)) TREE.view = "role";
       const root = buildTree(dir, treeFilter(dir));
@@ -1604,14 +1667,23 @@
           <div><h3>${esc(p.name)}</h3><div class="muted small">${esc([p.city, p.province, p.region].filter(Boolean).join(", ") || (p.country && p.country !== "Indonesia" ? `Lives in ${p.country}` : "Location not stated"))}</div></div>
           <button type="button" class="icon-btn" id="td-close" aria-label="Close">✕</button></header>
         <div class="td-roles">${p.roles.map((r) => `<span class="rchip" style="--rc:var(${roleColor(r)})">${esc(roleName(r))}</span>`).join("")}</div>
+        <div class="td-links">${p.li ? `<a class="lbtn li" href="${esc(p.li)}" target="_blank" rel="noopener noreferrer"><b>in</b> LinkedIn</a>` : ""}
+          ${p.prof ? `<a class="lbtn" href="${esc(p.prof)}" target="_blank" rel="noopener noreferrer">${icon("ext", 11)} Profile</a>` : ""}
+          ${!p.li ? `<a class="lbtn ghost" href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([p.name, p.inst].filter(Boolean).join(" "))}" target="_blank" rel="noopener noreferrer" title="Opens a LinkedIn search. Check it is the right person before adding the link to the source sheet.">Search LinkedIn</a>` : ""}</div>
+        ${!p.li ? `<p class="muted small td-note">No LinkedIn given. The search is a suggestion only: confirm it is the same person, then add the link to the source sheet.</p>` : ""}
         <dl class="kv">
+          <dt>Years with IM</dt><dd>${p.yrs ? `${p.yrs} year${p.yrs > 1 ? "s" : ""}` : "–"}${p.fy ? ` <span class="muted small">(${p.fy}${p.ly && p.ly !== p.fy ? `–${p.ly}` : ""})</span>` : ""}</dd>
+          <dt>Born in</dt><dd>${esc([p.bcity, p.bprov].filter(Boolean).join(", ") || (p.origin && p.origin !== "Indonesia" ? p.origin : "–"))}</dd>
           ${p.study ? `<dt>Studied in</dt><dd>${esc(p.study)}</dd>` : ""}${p.target ? `<dt>Wants to study in</dt><dd>${esc(p.target)}</dd>` : ""}
           ${p.inst ? `<dt>Institution</dt><dd>${esc(p.inst)}</dd>` : ""}
-          <dt>Active</dt><dd>${p.fy ? `${p.fy}${p.ly && p.ly !== p.fy ? `–${p.ly}` : ""}` : "–"}</dd>
           <dt>Events</dt><dd>${fmtInt(p.ev || 0)} attended${p.sp ? ` · spoke at ${fmtInt(p.sp)}` : ""}</dd>
           ${mentees.length ? `<dt>Mentored</dt><dd>${mentees.map((m) => link(m.i, ` <span class="muted small">${m.prog === "PHD" ? "PhD" : "Master"} ${m.year ?? ""}</span>`)).join("<br>")}</dd>` : ""}
           ${mentors.length ? `<dt>Mentor${mentors.length > 1 ? "s" : ""}</dt><dd>${mentors.map((m) => link(m.i, ` <span class="muted small">${m.prog === "PHD" ? "PhD" : "Master"} ${m.year ?? ""}</span>`)).join("<br>")}</dd>` : ""}
         </dl>
+        ${dir.dups.has(pi) ? `<div class="td-dups"><div class="tf-h">Possible duplicates</div>
+          ${(dir.dups.get(pi) || []).map((x) => `<p>${esc(DUP_TYPES[x.type] || x.type)}${x.others.length ? `: ${x.others.map((o) => link(o)).join(", ")}` : ""}</p>`).join("")}
+          <p class="muted small">Not merged automatically. To merge, correct the email in the source sheet; the review list is in the PEOPLE sheet.</p></div>` : ""}
+        ${p.emv > 1 ? `<div class="td-merged"><div class="tf-h">Merged records</div><p class="small">Typed ${p.emv} spellings of one email address (dots, capitals or +tags); counted as one person.</p></div>` : ""}
         ${evs.length ? `<div class="td-events"><div class="tf-h">Events</div><ul>${evs.slice(0, 12).map((x) => { const e = dir.events[x.ei]; return `<li>${esc(e.name)} <span class="muted small">${esc(e.year && !String(e.name).includes(String(e.year)) ? e.year : "")}${x.as !== "participants" ? ` · ${x.as === "speakers" ? "speaker" : "committee"}` : ""}</span></li>`; }).join("")}${evs.length > 12 ? `<li class="muted small">and ${evs.length - 12} more</li>` : ""}</ul></div>` : ""}`;
       box.hidden = false;
       requestAnimationFrame(() => box.classList.add("open"));

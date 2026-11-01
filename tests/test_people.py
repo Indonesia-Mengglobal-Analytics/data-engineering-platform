@@ -249,13 +249,20 @@ def test_directory_has_names_but_no_contact_details(gold_run, tmp_path):
     con, doc, lake = gold_run
     out = lake.parent / "out"
     d = unseal(json.loads((out / "people_directory.json").read_text()), PIN)
-    assert d["fields"] == ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
-                           "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had"]
+    assert d["fields"][:2] == ["name", "roles"] and {"birth_province", "origin_country", "years_with_im", "linkedin"} <= set(d["fields"])
     assert len(d["people"]) == doc["kpis"]["people"]
     assert any(p[0] == "Dimas Wijaya" for p in d["people"])
     blob = json.dumps(d)
-    for leaked in ("@", "+62", "IMP-", "linkedin", "1/2/1998"):
+    for leaked in ("@", "+62", "IMP-", "1/2/1998"):
         assert leaked not in blob
+    people = [dict(zip(d["fields"], p)) for p in d["people"]]
+    # Links people gave are cleaned to profile URLs; years with IM counts distinct active years.
+    assert all(p["linkedin"].startswith("https://www.linkedin.com/in/") for p in people if p["linkedin"])
+    dimas = next(p for p in people if p["name"] == "Dimas Wijaya")
+    assert dimas["years_with_im"] >= 3 and dimas["birth_province"] and dimas["email_variants"] == 2
+    # Possible duplicates from the review queue point at both people.
+    pair = next(x for x in d["duplicates"] if x[0] == "same_phone_similar_name")
+    assert {people[i]["name"] for i in pair[1]} == {"Rara Kinasih"}
     # Pairs and events point at list positions.
     assert len(d["mentorships"]) == 21 and all(0 <= a < len(d["people"]) and 0 <= b < len(d["people"]) for a, b, *_ in d["mentorships"])
     # Names never reach the aggregate file.

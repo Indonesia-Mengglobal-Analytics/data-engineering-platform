@@ -17,7 +17,7 @@ people:
     full_name: [full_name, full name, name]
     phone: [phone, whatsapp phone number, phone_number_whatsapp, whatsapp_phone_number]
     year: [batch, year]
-    linkedin: [linkedin, linked_in]
+    linkedin: [linkedin, linked_in, linkedin url, linkedin_url, "linkedin profile"]
     birthday: [birthday, date of birth, date_of_birth]
 
   # Profile fields for the people gold table (pipeline/people_gold.py). The newest non-empty answer of a
@@ -36,6 +36,8 @@ people:
     target_university: [application_1_university, target university/ institution, preferred_university_or_institution_1]
     area_of_study: [doctoral_degree_areas_of_study, phd_area_of_study, master_area_of_study, "master's degree - area of study", area_of_study, bachelor_area_of_study]
     occupation_institution: ["current occupation - institution", current_occupation_institution, work_experience_name_of_institution]
+    origin_country: [country_of_origin, country of origin]
+    profile_url: [link_to_your_research_profile, research profile, google scholar, website, personal website]
 
   sources:
     # ---------------- Master mentorship (the regular IM Mentorship) ----------------

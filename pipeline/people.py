@@ -316,7 +316,8 @@ def resolve(records: list[Record]) -> dict:
         people.append({"person_id": pid, "full_name": best_name, "email": shown, "email_key": email,
                        "raw_emails": sorted(set(typed) - {shown}),
                        "phone": phones[0] if phones else None,
-                       "linkedin": next((r.linkedin for r in recs if r.linkedin), None),
+                       "linkedin": next((r.linkedin for r in sorted(recs, key=lambda r: (r.year or 0, r.sheet_row), reverse=True)
+                                         if r.linkedin), None),
                        "years": years, "first_year": years[0] if years else None, "last_year": years[-1] if years else None,
                        "labels": labels, "n_records": len(recs), "n_sources": len({r.source for r in recs}),
                        "name_variants": sorted(names)})
