@@ -18,6 +18,7 @@ on:
       - pipeline/people.py
       - pipeline/people_gold.py
       - pipeline/people_lineage.py
+      - pipeline/people_anomaly.py
       - pipeline/people_build.py
       - pipeline/sources.py
       - pipeline/seal.py

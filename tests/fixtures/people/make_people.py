@@ -41,7 +41,7 @@ STUDIED = [("United Kingdom", "University of Oxford", "Economics"), ("Netherland
 def mentee_row(p, year, sel, i=0):
     t = TARGET[i % len(TARGET)]
     link = f"linkedin.com/in/{p[0].lower().replace(' ', '-')}-{i}" if i % 3 == 0 else ""  # invented handles
-    return [str(year), p[1], p[2], "TRUE" if sel else "FALSE", p[0], link, BIRTH[i % len(BIRTH)], "", "", "1/2/1998",
+    return [str(year), p[1], p[2], "TRUE" if sel else "FALSE", p[0], link, BIRTH[i % len(BIRTH)], "", "", f"{1 + i % 28}/{1 + i % 12}/{1990 + i % 10}",
             RESIDENCE[i % len(RESIDENCE)], t[0], t[1], "Universitas Indonesia"]
 
 
@@ -80,6 +80,18 @@ mentee += [
     ["2008", "old.timer@gmail.com", "#ERROR!", "FALSE", "Old Timer", "", "", "", "", "", ""],
     ["2023", "two.phones@gmail.com", "+6281100005123 (WA only) / 081100007345", "FALSE", "Dua Telepon", "", "", "", "", "", ""],
     ["2023", "digit.name@gmail.com", "+6281277777777", "FALSE", "Siti Nur 2", "", "", "", "", "", ""],
+    # Dummy rows the fixed rules miss; the detector should score them high.
+    ["2024", "johndoe@gmail.com", "081234567890", "FALSE", "John Doe", "", "", "", "", "", "Jakarta"],
+    ["2025", "fulan@gmail.com", "", "FALSE", "Fulan", "", "", "", "", "", ""],
+    ["2023", "bdfghjk.trwq@gmail.com", "+6281366677788", "FALSE", "Bdfghjk Trwqzx", "", "", "", "", "", "lorem ipsum"],
+    # A real-looking person who typed lorem ipsum in one answer: stays low.
+    ["2024", "nadia.putri@gmail.com", "+6281399911122", "FALSE", "Nadia Putri", "", "Bandung", "", "", "3/4/1997", "lorem ipsum dolor"],
+    # Long names, one typed in capitals: the tree must fit them in the box.
+    ["2024", "bima.yatna@gmail.com", "+6281355512345", "TRUE", "BIMA YATNA ANUGERAH RAMADHAN", "linkedin.com/in/bima-yatna-ar", "Malang", "", "", "2/2/1995", "Surabaya"],
+    ["2023", "annisa.rwk@gmail.com", "+6281355512399", "FALSE", "Annisa Ramadhani Wijayanti Kusumaningrum", "", "Yogyakarta", "", "", "5/9/1996", "Jogja"],
+    # Same person with two addresses and a spelling variant: found by name similarity and the same birthday.
+    ["2022", "muh.rizky.p@gmail.com", "+6281355500011", "TRUE", "Muhammad Rizky Pratama", "", "Bogor", "", "", "14/7/1996", "Depok"],
+    ["2024", "rizkipratama.work@yahoo.com", "+6281355500099", "FALSE", "M. Rizki Pratama", "", "Bogor", "", "", "14/7/1996", "Depok"],
 ]
 all_time = {"spreadsheet_id": "1nHoX0NFpKD4XIthfgCQ9LU5GFb4B07WpX8UMLlCWfbs", "title": "[DB] All Time Mentorship Profiling",
             "tabs": {"Mentee": mentee, "Mentor": mentor}}
@@ -107,6 +119,9 @@ pdb = {"spreadsheet_id": "1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM", "title"
 accepted = [["", "", "", "", "", "", "Unique Members", "9", "2"], ["Year", "Email", "Division", "Position", "Count"]]
 for i in list(range(0, 8)) + [1]:
     accepted.append([str(2022 + i % 3), POOL[i][1], "Data", "Member", "1"])
+# People who only appear in the management sheets, which have no name column: they get no name.
+for k, e in enumerate(["mgmt.only.one@gmail.com", "mgmt.only.two@gmail.com", "mgmt.only.three@yahoo.com"]):
+    accepted.append([str(2021 + k), e, "Partnership", "Member", "1"])
 applied = [[], ["Year", "Email", "International Exp", "Past IM Exp", "Position Choice 1"]]
 for i in range(0, 14):
     applied.append([str(2022 + i % 3), POOL[i][1], "Yes", "Mentee", "Data"])

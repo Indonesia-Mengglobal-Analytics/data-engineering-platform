@@ -28,6 +28,7 @@ DUMMY_DOMAINS = {"example.com", "example.org", "example.net", "test.com", "test.
                  "email.com", "mail.com.invalid"}
 GMAIL = {"gmail.com", "googlemail.com"}
 KEYBOARD_ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890")
+ROW_DUMMY_RE = re.compile(r"\b(lorem|ipsum|dummy|testing|test\s?data|asdf+|qwerty|sample\s?data|xxx+|blabla)\b", re.I)
 
 
 # ---------------------------------------------------------------- normalization
@@ -85,6 +86,27 @@ def clean_name(raw: str | None) -> str | None:
         return None
     n = re.sub(r"\s+", " ", str(raw)).strip().strip(".,;-")
     return n or None
+
+
+NAME_PARTICLES = {"bin", "binti", "van", "von", "der", "den", "de", "da", "dos", "du", "la", "le", "di"}
+
+
+def proper_name(name: str | None) -> str | None:
+    """Display standard for names, word by word: a word in ALL CAPS or all lowercase becomes proper case; a word
+    typed in mixed case is kept (McDonald, DeLuca). Capitals after hyphens and apostrophes; joining words such as
+    bin, binti, van stay lowercase except at the start; extra spaces removed."""
+    if not name:
+        return name
+    out = []
+    for i, w in enumerate(re.sub(r"\s+", " ", str(name)).strip().split(" ")):
+        letters = [c for c in w if c.isalpha()]
+        if letters and any(c.isupper() for c in letters) and any(c.islower() for c in letters):
+            out.append(w)  # mixed case: typed on purpose
+        elif i and w.lower() in NAME_PARTICLES:
+            out.append(w.lower())
+        else:
+            out.append(re.sub(r"(^|[-'’.])([a-z])", lambda m: m.group(1) + m.group(2).upper(), w.lower()))
+    return " ".join(out)
 
 
 def name_key(name: str | None) -> str:
@@ -181,6 +203,10 @@ class Record:
     event: str | None = None
     linkedin: str | None = None
     attrs: dict = field(default_factory=dict)
+    birthday: str | None = None
+    row_dummy_hits: int = 0          # cells with lorem ipsum, "test", "dummy"… (columns named dummy are skipped)
+    dummy_p: float = 0.0             # probability the row is dummy data (people_anomaly.dummy_score)
+    dummy_reasons: list = field(default_factory=list)
     source_has_name: bool = True
     email: str | None = None
     name: str | None = None
@@ -228,6 +254,7 @@ def extract(source: dict, rows: list[list], cols: dict, min_year: int, max_year:
     roles = {k.lower(): v for k, v in (source.get("roles") or {}).items()}
     year_cols = ([source["year_column"]] if source.get("year_column") else []) + cols["year"] + ["timestamp"]
     attr_cols = attribute_columns(source, attributes or {})
+    scan = [i for i, h in enumerate(header) if "dummy" not in h.lower()]
     out = []
     for n, row in enumerate(rows[hr:], start=hr + 1):
         if not any(str(v).strip() for v in row):
@@ -247,7 +274,9 @@ def extract(source: dict, rows: list[list], cols: dict, min_year: int, max_year:
                      phone_raw=_pick(row, idx, cols["phone"]), year=year,
                      event=_pick(row, idx, [source["event_column"]]) if source.get("event_column") else None,
                      linkedin=_pick(row, idx, cols["linkedin"]),
-                     attrs={a: _pick(row, idx, names) for a, names in attr_cols.items()})
+                     attrs={a: _pick(row, idx, names) for a, names in attr_cols.items()},
+                     birthday=_pick(row, idx, cols["birthday"]),
+                     row_dummy_hits=sum(1 for i in scan if i < len(row) and ROW_DUMMY_RE.search(str(row[i] or ""))))
         out.append(rec)
     return out, facts
 
@@ -296,7 +325,9 @@ def resolve(records: list[Record]) -> dict:
         pid = person_id(email)
         names = Counter(r.name for r in recs if r.name and "dummy_name" not in r.anomalies)
         latest = max(recs, key=lambda r: (r.year or 0, r.sheet_row))
-        best_name = max(names.items(), key=lambda kv: (kv[1], kv[0] == latest.name))[0] if names else None
+        # Prefer a name typed in proper case when the same name was also typed in capitals or lowercase.
+        best_name = max(names.items(), key=lambda kv: (kv[1], kv[0] == proper_name(kv[0]), kv[0] == latest.name))[0] if names else None
+        best_name = proper_name(best_name)
         phones = [r.phone for r in sorted(recs, key=lambda r: (r.year or 0, r.sheet_row), reverse=True) if r.phone]
         # Show an address the person actually typed; the normalized key only groups them.
         typed = Counter(str(r.email_raw).strip().lower() for r in recs)

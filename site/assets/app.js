@@ -264,6 +264,8 @@
     if (treeEl) mountTree(treeEl);
     const linEl = $("#plineage");
     if (linEl) mountLineage(linEl);
+    const detEl = $("#pdetect");
+    if (detEl) mountDetect(detEl);
   }
 
   // ---------- pages ----------
@@ -1167,7 +1169,7 @@
     ["event", "Events"], ["study", "Study country"], ["dups", "Possible duplicates"],
   ];
   const DUP_TYPES = {
-    same_phone_similar_name: "Same phone, similar name", same_phone_different_name: "Same phone, different name",
+    similar_name: "Very similar name", same_phone_similar_name: "Same phone, similar name", same_phone_different_name: "Same phone, different name",
     same_name_different_email: "Same name, different email", same_email_different_names: "One email, different names",
     mentor_and_mentee_same_year: "Mentor and mentee in one year",
   };
@@ -1192,6 +1194,7 @@
         fy: r[f.first_year], ly: r[f.last_year], ev: r[f.events_attended], sp: r[f.events_spoken], mm: r[f.mentees_mentored], mh: r[f.mentors_had],
         bcity: r[f.birth_city], bprov: r[f.birth_province], bregion: r[f.birth_region], origin: r[f.origin_country],
         yrs: r[f.years_with_im] || 0, li: r[f.linkedin], prof: r[f.profile], emv: r[f.email_variants] || 1 };
+      if (!p.name) { p.unnamed = true; p.name = `No name · ${r[f.email_hint] || "email hidden"}`; } else p.name = niceName(p.name);
       p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, p.bcity, p.bprov, p.bregion, p.origin, ...p.roles.map(roleName)]
         .filter(Boolean).join(" · ").toLowerCase();
       return p;
@@ -1214,7 +1217,9 @@
       if (!dups.has(i)) dups.set(i, []);
       dups.get(i).push({ di, type, others: ids.filter((x) => x !== i), detail });
     }));
-    DIR = { src: d, people, mentees, mentors, events, eventsOf, pairs: d.mentorships, dups, dupList: d.duplicates || [] };
+    const unnamedWhy = new Map((d.unnamed || []).map(([i, cause, srcs]) => [i, { cause, srcs }]));
+    DIR = { src: d, people, mentees, mentors, events, eventsOf, pairs: d.mentorships, dups, dupList: d.duplicates || [], unnamedWhy,
+      suspects: d.suspects || [] };
     return DIR;
   }
 
@@ -1301,8 +1306,10 @@
       const keep = new Set(people.map((p) => p.i));
       dir.dupList.forEach(([type, ids], di) => {
         if (!ids.some((i) => keep.has(i))) return;
+        const prob = dir.dupList[di][3];
         const label = ids.map((i) => dir.people[i].name.split(/\s+/)[0]).join(" · ");
-        for (const i of ids) addPath(root, [{ kind: "dtype", label: DUP_TYPES[type] || type, color: "--c2" }, { kind: "pair", label: `${label} #${di + 1}`, color: "--c2" }], dir.people[i]);
+        for (const i of ids) addPath(root, [{ kind: "dtype", label: DUP_TYPES[type] || type, color: "--c2" },
+          { kind: "pair", label: `${prob != null ? `${Math.round(prob * 100)}% ` : ""}${label} #${di + 1}`, color: "--c2" }], dir.people[i]);
       });
     } else if (v === "study") {
       for (const p of people) for (const r of p.roles.filter(shown)) {
@@ -1376,7 +1383,39 @@
     return `M${sx},${py}H${mx}V${cy}H${cx}`;
   };
   const truncate = (t, n) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
-  const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  // Pixel-accurate fitting: labels are measured in the font they are drawn with, so long or ALL-CAPS names
+  // never run under a badge or out of their box.
+  const measureCtx = document.createElement("canvas").getContext("2d");
+  const fitCache = new Map();
+  function fitText(text, maxPx, size = 12.5, weight = 500, spacing = 0) {
+    text = String(text ?? "");
+    const key = `${text}|${maxPx}|${size}|${weight}|${spacing}`;
+    if (fitCache.has(key)) return fitCache.get(key);
+    measureCtx.font = `${weight} ${size}px ${getComputedStyle(document.body).fontFamily}`;
+    const w = (t) => measureCtx.measureText(t).width + spacing * t.length;
+    let out = text;
+    if (w(text) > maxPx) {
+      let lo = 0, hi = text.length;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (w(`${text.slice(0, mid).trimEnd()}…`) <= maxPx) lo = mid; else hi = mid - 1; }
+      out = `${text.slice(0, lo).trimEnd()}…`;
+    }
+    if (fitCache.size > 20000) fitCache.clear();
+    fitCache.set(key, out);
+    return out;
+  }
+  const textWidth = (t, size = 12.5, weight = 500) => { measureCtx.font = `${weight} ${size}px ${getComputedStyle(document.body).fontFamily}`; return measureCtx.measureText(String(t)).width; };
+  // Same display standard as the pipeline (people.proper_name): ALL CAPS or all lowercase -> proper case.
+  const NAME_PARTICLES = new Set(["bin", "binti", "van", "von", "der", "den", "de", "da", "dos", "du", "la", "le", "di"]);
+  const niceName = (raw) => {
+    if (!raw) return raw;
+    return String(raw).replace(/\s+/g, " ").trim().split(" ").map((w, i) => {
+      const l = w.replace(/[^\p{L}]/gu, "");
+      if (l && l !== l.toUpperCase() && l !== l.toLowerCase()) return w;
+      if (i && NAME_PARTICLES.has(w.toLowerCase())) return w.toLowerCase();
+      return w.toLowerCase().replace(/(^|[-'’.])(\p{Ll})/gu, (_, a, b) => a + b.toUpperCase());
+    }).join(" ");
+  };
+  const initials = (name) => (name.startsWith("No name") ? "?" : name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase());
 
   function nodeMarkup(it, dir) {
     const n = it.n, open = TREE.expanded.has(n.key), canOpen = n.children.size > 0;
@@ -1391,10 +1430,15 @@
       const sub = [p.city || p.province || (p.country && p.country !== "Indonesia" ? p.country : ""), p.yrs ? `${p.yrs} yr${p.yrs > 1 ? "s" : ""}` : "",
         p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
       const dup = dir.dups.has(n.person);
+      // Space for text: box width minus avatar, toggle, LinkedIn badge and duplicate dot.
+      const room = NODE_W - 33 - 10 - (canOpen ? 24 : 0) - (p.li ? 21 : 0) - (dup ? 12 : 0);
+      const label = p.unnamed ? p.name.replace("No name · ", "") : p.name;
+      const subline = p.unnamed ? ["No name", sub].filter(Boolean).join(" · ") : sub;
       return `<rect class="tn-box person ${sel ? "sel" : ""} ${hit ? "hit" : ""}" width="${NODE_W}" height="${NODE_H}" rx="16"/>
-        <circle cx="16" cy="${NODE_H / 2}" r="11" fill="var(${n.color})"/><text class="tn-ini" x="16" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
-        <text class="tn-label" x="33" y="${sub ? 13 : NODE_H / 2 + 4}">${esc(truncate(p.name, 25 - (p.li ? 3 : 0) - (canOpen ? 3 : 0)))}</text>
-        ${sub ? `<text class="tn-sub" x="33" y="25">${esc(truncate(sub, 32 - (p.li ? 4 : 0) - (dup ? 2 : 0) - (canOpen ? 4 : 0)))}</text>` : ""}
+        <circle cx="16" cy="${NODE_H / 2}" r="11" fill="var(${p.unnamed ? "--c9" : n.color})"/><text class="tn-ini" x="16" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
+        <title>${esc(p.name)}${sub ? ` · ${esc(sub)}` : ""}</title>
+        <text class="tn-label ${p.unnamed ? "unnamed" : ""}" x="33" y="${subline ? 13 : NODE_H / 2 + 4}">${esc(fitText(label, room, 12.5, 500))}</text>
+        ${subline ? `<text class="tn-sub" x="33" y="25">${esc(fitText(subline, room, 10.5, 400))}</text>` : ""}
         ${dup ? `<circle class="tn-dup" cx="${NODE_W - (canOpen ? 30 : 12)}" cy="9" r="4"><title>Possible duplicate: see details</title></circle>` : ""}
         ${p.li ? `<g class="tn-li" transform="translate(${NODE_W - (canOpen ? 36 : 18) - (dup ? 10 : 0)},${NODE_H / 2 + 1})"><rect x="-6" y="-6" width="12" height="12" rx="2.5"/><text y="3.2" text-anchor="middle">in</text></g>` : ""}
         ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
@@ -1402,7 +1446,8 @@
     const count = fmtInt(n.people.size);
     return `<rect class="tn-box group ${n.kind}" width="${NODE_W}" height="${NODE_H}" rx="7"/>
       <rect class="tn-accent" width="4" height="${NODE_H - 12}" x="7" y="6" rx="2" fill="var(${n.color})"/>
-      <text class="tn-label" x="18" y="${NODE_H / 2 + 4}">${esc(truncate(n.label, n.kind === "root" ? 20 : 19))}</text>
+      <title>${esc(n.label)}: ${count} people</title>
+      <text class="tn-label" x="18" y="${NODE_H / 2 + 4}">${esc(fitText(n.label, NODE_W - 18 - 10 - (canOpen ? 24 : 4) - textWidth(count, 11.5, 600) - 8, 12.5, 500))}</text>
       <g transform="translate(${NODE_W - (canOpen ? 30 : 10)},${NODE_H / 2})"><text class="tn-count" text-anchor="end" y="4">${count}</text></g>
       ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
   }
@@ -1668,6 +1713,9 @@
       box.innerHTML = `<header><span class="ini lg" style="background:var(${roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
           <div><h3>${esc(p.name)}</h3><div class="muted small">${esc([p.city, p.province, p.region].filter(Boolean).join(", ") || (p.country && p.country !== "Indonesia" ? `Lives in ${p.country}` : "Location not stated"))}</div></div>
           <button type="button" class="icon-btn" id="td-close" aria-label="Close">✕</button></header>
+        ${p.unnamed ? `<div class="td-dups"><div class="tf-h">No name in any source</div><p class="small">${dir.unnamedWhy.get(pi)?.cause === "left_blank" ? "The name was left blank in every form this person filled in." : "Every sheet this person appears in has no name column."}</p>
+          <p class="muted small">From: ${esc((dir.unnamedWhy.get(pi)?.srcs || []).join(", ") || "–")}</p></div>` : ""}
+        ${(() => { const s = dir.suspects.filter((x) => x[7] === pi); return s.length ? `<div class="td-dups"><div class="tf-h">Dummy-data check</div>${s.map((x) => `<p class="small"><b>${Math.round(x[4] * 100)}%</b> likely dummy · ${esc(x[0])} row ${x[1]}<br><span class="muted">${esc(x[5].join("; "))}</span></p>`).join("")}</div>` : ""; })()}
         <div class="td-roles">${p.roles.map((r) => `<span class="rchip" style="--rc:var(${roleColor(r)})">${esc(roleName(r))}</span>`).join("")}</div>
         <div class="td-links">${p.li ? `<a class="lbtn li" href="${esc(p.li)}" target="_blank" rel="noopener noreferrer"><b>in</b> LinkedIn</a>` : ""}
           ${p.prof ? `<a class="lbtn" href="${esc(p.prof)}" target="_blank" rel="noopener noreferrer">${icon("ext", 11)} Profile</a>` : ""}
@@ -1683,7 +1731,7 @@
           ${mentors.length ? `<dt>Mentor${mentors.length > 1 ? "s" : ""}</dt><dd>${mentors.map((m) => link(m.i, ` <span class="muted small">${m.prog === "PHD" ? "PhD" : "Master"} ${m.year ?? ""}</span>`)).join("<br>")}</dd>` : ""}
         </dl>
         ${dir.dups.has(pi) ? `<div class="td-dups"><div class="tf-h">Possible duplicates</div>
-          ${(dir.dups.get(pi) || []).map((x) => `<p>${esc(DUP_TYPES[x.type] || x.type)}${x.others.length ? `: ${x.others.map((o) => link(o)).join(", ")}` : ""}</p>`).join("")}
+          ${(dir.dups.get(pi) || []).map((x) => { const row = dir.dupList[x.di]; return `<p>${row[3] != null ? `<b>${Math.round(row[3] * 100)}%</b> same person · ` : ""}${esc(DUP_TYPES[x.type] || x.type)}${x.others.length ? `: ${x.others.map((o) => link(o)).join(", ")}` : ""}${row[4]?.length ? `<br><span class="muted small">${esc(row[4].join(", "))}${row[5]?.length ? ` · against: ${esc(row[5].join(", "))}` : ""}</span>` : ""}</p>`; }).join("")}
           <p class="muted small">Not merged automatically. To merge, correct the email in the source sheet; the review list is in the PEOPLE sheet.</p></div>` : ""}
         ${p.emv > 1 ? `<div class="td-merged"><div class="tf-h">Merged records</div><p class="small">Typed ${p.emv} spellings of one email address (dots, capitals or +tags); counted as one person.</p></div>` : ""}
         ${evs.length ? `<div class="td-events"><div class="tf-h">Events</div><ul>${evs.slice(0, 12).map((x) => { const e = dir.events[x.ei]; return `<li>${esc(e.name)} <span class="muted small">${esc(e.year && !String(e.name).includes(String(e.year)) ? e.year : "")}${x.as !== "participants" ? ` · ${x.as === "speakers" ? "speaker" : "committee"}` : ""}</span></li>`; }).join("")}${evs.length > 12 ? `<li class="muted small">and ${evs.length - 12} more</li>` : ""}</ul></div>` : ""}`;
@@ -1698,12 +1746,14 @@
 
     drawFilters();
     render();
+    const want = hashParams().get("person");
+    if (want != null && dir.people[+want]) setTimeout(() => reveal(+want), 50);
   }
 
   // ---------- people lineage ----------
   // Layered left-to-right DAG: sources -> tables -> outputs. Edges that skip columns get waypoints in the
   // columns they cross (Sugiyama style), so lines run in empty lanes; every bend is a right angle.
-  const LIN_COLS = ["Sources", "Read", "Clean & merge", "Resolve & link", "Gold", "Build", "Store", "Shown in"];
+  const LIN_COLS = ["Sources", "Read", "Clean & merge", "Resolve & link", "Gold", "Detect", "Build", "Store", "Shown in"];
   const LIN_KIND = { source: "Sheet tab", table: "Table", step: "Step", store: "Storage", output: "Output" };
   const LIN_COLOR = (n) => n.kind === "source" ? (n.group?.endsWith("_PAIRING") ? "--c10" : roleColor(n.group)) :
     n.kind === "output" ? "--c3" : n.kind === "store" ? "--c5" : n.kind === "step" ? "--c9" : "--c1";
@@ -1791,8 +1841,9 @@
         <g class="lin-nodes">${real.map((n) => `<g class="ln ln-${n.kind} ${n.status !== "ok" && n.status !== "read" ? "off" : ""}" data-id="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}" transform="translate(${n.x},${n.y - NH / 2})" style="--d:${n.col}">
           <rect class="ln-box" width="${NW}" height="${NH}" rx="${n.kind === "output" ? 20 : 8}"/>
           <rect class="ln-accent" x="7" y="7" width="4" height="${NH - 14}" rx="2" fill="var(${LIN_COLOR(n)})"/>
-          <text class="ln-kind" x="18" y="14">${esc(truncate(n.kind === "source" ? (n.label.includes(" · ") ? n.label.split(" · ")[0] : "Sheet") : (LIN_KIND[n.kind] || n.kind), 30))}${n.status === "unreachable" ? " · not read" : n.status === "off" ? " · off" : ""}</text>
-          <text class="ln-label" x="18" y="29">${esc(truncate(n.kind === "source" && n.label.includes(" · ") ? n.label.split(" · ").slice(1).join(" · ") : n.label, fmtC(n) ? 22 : 28))}</text>
+          <title>${esc(n.label)}${fmtC(n) ? ` · ${esc(fmtC(n))}` : ""}</title>
+          <text class="ln-kind" x="18" y="14">${esc(fitText(((n.kind === "source" ? (n.label.includes(" · ") ? n.label.split(" · ")[0] : "Sheet") : (LIN_KIND[n.kind] || n.kind)) + (n.status === "unreachable" ? " · not read" : n.status === "off" ? " · off" : "")).toUpperCase(), NW - 18 - 10, 9.5, 400, 0.5))}</text>
+          <text class="ln-label" x="18" y="29">${esc(fitText(n.kind === "source" && n.label.includes(" · ") ? n.label.split(" · ").slice(1).join(" · ") : n.label, NW - 18 - 10 - (n.count != null ? textWidth(fmtInt(n.count), 11.5, 600) + 10 : 0), 12.5, 600))}</text>
           ${fmtC(n) ? `<text class="ln-count" x="${NW - 10}" y="29" text-anchor="end">${esc(fmtInt(n.count))}</text>` : ""}</g>`).join("")}</g></svg>`;
 
       const svg = el.querySelector("svg"), paths = [...svg.querySelectorAll(".le")], gs = [...svg.querySelectorAll(".ln")];
@@ -1940,9 +1991,114 @@
         <dt>Query</dt><dd><a href="${esc(sqlLink("SELECT label, activity_year, count(*) AS people FROM people.activities GROUP BY ALL ORDER BY 1, 2"))}">people.people, people.activities, people.anomalies, people.review</a> in the SQL editor.</dd></dl></div>`;
   }
 
+  // ---------- anomaly detection ----------
+  const DET = { level: "50", source: "", q: "", shown: 40, dupShown: 30 };
+  const pctColor = (p) => (p >= 0.8 ? "var(--danger)" : p >= 0.5 ? "var(--warning)" : "var(--success)");
+  const pctBar = (p) => `<span class="pbar"><span style="width:${Math.round(p * 100)}%;background:${pctColor(p)}"></span></span><b class="ppct" style="color:${pctColor(p)}">${Math.round(p * 100)}%</b>`;
+
+  function mountDetect(el) {
+    const P = D.people, X = P.detector, dir = directoryPeople();
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const dm = X.dummy, du = X.duplicates, un = X.unnamed || { people: 0, by_source: [], causes: {} };
+    const hist = (h, kind) => {
+      const max = Math.max(1, ...h.map((b) => b.count));
+      return `<div class="phist" role="img" aria-label="${kind} probability histogram">${h.map((b, i) => {
+        const mid = (b.from + 5) / 100;
+        return `<div class="phb" title="${b.from}–${b.to}%: ${fmtInt(b.count)}"><span class="phn">${b.count ? fmtInt(b.count) : ""}</span>
+          <span class="phbar" style="--h:${b.count ? Math.max(3, (100 * Math.sqrt(b.count)) / Math.sqrt(max)) : 0}%;background:${pctColor(mid)};--i:${i}"></span><span class="phl">${b.from}</span></div>`;
+      }).join("")}</div><div class="phaxis muted small"><span>0% · looks real</span><span>50% · suspicious</span><span>100% · ${kind === "dummy" ? "dummy" : "same person"}</span></div>`;
+    };
+    const kpi = (label, n, sub, tone) => `<div class="card stat det-kpi ${tone}"><div class="label">${label}</div><div class="value" data-count="${n}">0</div><div class="muted small">${sub}</div></div>`;
+    const sources = [...new Set((dir?.suspects || []).map((x) => x[0]))].sort();
+    el.innerHTML = `<div class="card det-head"><div><h3>Anomaly detection</h3>
+        <p class="muted small" style="margin:4px 0 0">Every source row gets a <b>probability of being dummy data</b>, and every pair of people that may be one person gets a <b>probability of being the same person</b>. ${esc(X.method)}</p></div></div>
+      <div class="grid grid-4 det-kpis">
+        ${kpi("Likely dummy", dm.likely, "rows at 80% or more", "bad")}
+        ${kpi("Suspicious", dm.suspicious, "rows at 50–79%", "warn")}
+        ${kpi("Possible duplicates", du.likely + du.suspicious, `pairs at 50% or more · ${fmtInt(du.likely)} at 80%+`, "warn")}
+        ${kpi("People without a name", un.people, `of ${fmtInt(un.of || 0)} people`, "info")}
+      </div>
+      <div class="grid grid-2" style="margin-bottom:16px">
+        <div class="card"><h3>Dummy-data probability</h3><div class="sub muted small" style="margin-bottom:8px">${fmtInt(dm.rows)} source rows by score (heights on a square-root scale so small bars stay visible).</div>${hist(dm.hist, "dummy")}</div>
+        <div class="card"><h3>Same-person probability</h3><div class="sub muted small" style="margin-bottom:8px">${fmtInt(du.pairs)} candidate pairs: the review list plus similar names found by blocking.</div>${hist(du.hist, "duplicate")}</div>
+      </div>
+      <div class="grid grid-2" style="margin-bottom:16px">
+        <div class="card"><h3>Signals behind the dummy score</h3><div class="sub muted small" style="margin-bottom:8px">Weight = evidence each signal adds (log-odds). Count = rows at 50%+ where it fired.</div>
+          <div class="sigs">${dm.signals.sort((a, b) => b.weight - a.weight).map((g) => { const n = (dm.reasons.find((r) => r.code === g.code) || {}).rows || 0; return `<div class="sig"><span class="sigl">${esc(g.label)}</span>
+            <span class="sigw"><span style="width:${(100 * g.weight) / 6}%"></span></span><span class="sign">+${g.weight.toFixed(1)}</span><span class="sigc ${n ? "" : "muted"}">${fmtInt(n)}</span></div>`; }).join("")}</div></div>
+        <div class="card"><h3>Signals behind the same-person score</h3><div class="sub muted small" style="margin-bottom:8px">Negative signals lower the score: two people sharing a phone but with clearly different names are probably family.</div>
+          <div class="sigs">${du.signals.filter((g) => g.weight).sort((a, b) => b.weight - a.weight).map((g) => `<div class="sig"><span class="sigl">${esc(g.label)}</span>
+            <span class="sigw ${g.weight < 0 ? "neg" : ""}"><span style="width:${(100 * Math.abs(g.weight)) / 6}%"></span></span><span class="sign">${g.weight > 0 ? "+" : ""}${g.weight.toFixed(1)}</span><span></span></div>`).join("")}</div>
+          <p class="muted small" style="margin:10px 0 0">Plus up to +0.3 for a name similarity above 0.85 (Jaro-Winkler, initials allowed).</p></div>
+      </div>
+      <div class="card" style="margin-bottom:16px"><div class="det-bar"><h3>Rows to check</h3>
+          <div class="det-filters"><div class="tf-search"><svg viewBox="0 0 16 16" width="14" height="14"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.5"/></svg><input id="det-q" type="search" placeholder="Name, email, signal…" aria-label="Search rows"></div>
+          <select id="det-level" aria-label="Score"><option value="50">50% or more</option><option value="80">80% or more (likely)</option></select>
+          <select id="det-src" aria-label="Source"><option value="">Every source</option>${sources.map((x) => `<option>${esc(x)}</option>`).join("")}</select></div></div>
+        <div id="det-rows"></div></div>
+      <div class="card" style="margin-bottom:16px"><h3>Possible duplicate pairs</h3><div class="sub muted small" style="margin-bottom:8px">Never merged automatically. To merge, correct the email in the source sheet; the next run joins them.</div><div id="det-dups"></div></div>
+      <div class="card" style="margin-bottom:16px"><h3>People without a name</h3>
+        <p class="small" style="margin:4px 0 10px"><b>${fmtInt(un.people)}</b> people have no name in any of their rows, so the tree shows them as “No name · masked email”. They are real email addresses, not dummy data:
+          <b>${fmtInt(un.causes.no_name_column || 0)}</b> appear only in sheets that have <b>no name column</b>, and <b>${fmtInt(un.causes.left_blank || 0)}</b> left the name blank.
+          To fix it, add a name column to those sheets (or a lookup by email) and the next run fills the names in.</p>
+        <div class="table-wrap"><table><thead><tr><th>Source</th><th>Name column</th><th class="num">People without a name</th></tr></thead><tbody>
+          ${un.by_source.map((x) => `<tr><td>${esc(x.title)}</td><td>${x.has_name_column ? badge("ok", "yes") : badge("warn", "none")}</td><td class="num">${fmtInt(x.people)}</td></tr>`).join("") || `<tr><td colspan="3" class="empty">Everyone has a name.</td></tr>`}
+        </tbody></table></div>
+        ${dir ? `<div id="det-unnamed" class="det-unnamed"></div>` : ""}</div>`;
+    // Count-up on the KPI tiles, bars grow in.
+    $$("[data-count]", el).forEach((v) => {
+      const to = +v.dataset.count, t0 = performance.now(), dur = reduce ? 0 : 700;
+      const step = (now) => { const t = dur ? Math.min(1, (now - t0) / dur) : 1; v.textContent = fmtInt(Math.round(to * (1 - Math.pow(1 - t, 3)))); if (t < 1) requestAnimationFrame(step); };
+      requestAnimationFrame(step);
+    });
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("go")));
+
+    const toTree = (i) => `#/people/tree?person=${i}`;
+    const drawRows = () => {
+      const box = $("#det-rows", el);
+      if (!dir) { box.innerHTML = `<p class="muted small">The row list needs people_directory.json (publish_directory: true).</p>`; return; }
+      const min = +DET.level / 100, q = DET.q.trim().toLowerCase();
+      const rows = dir.suspects.filter((x) => x[4] >= min && (!DET.source || x[0] === DET.source)
+        && (!q || [x[2], x[3], x[0], ...x[5]].join(" ").toLowerCase().includes(q)));
+      box.innerHTML = rows.length ? `<div class="table-wrap"><table class="det-table"><thead><tr><th>Dummy probability</th><th>Name as typed</th><th>Email</th><th>Source · row</th><th>Signals</th><th>Status</th></tr></thead><tbody>
+        ${rows.slice(0, DET.shown).map((x) => `<tr><td class="nowrap">${pctBar(x[4])}</td><td>${x[7] != null ? `<a href="${toTree(x[7])}">${esc(x[2])}</a>` : esc(x[2])}</td>
+          <td class="mono small">${esc(x[3] || "–")}</td><td class="small">${esc(x[0])}<span class="muted"> · row ${x[1]}</span></td>
+          <td>${x[5].map((r) => `<span class="schip">${esc(r)}</span>`).join("")}</td><td>${x[6] ? badge("fail", "excluded") : badge("warn", "kept · check")}</td></tr>`).join("")}
+        </tbody></table></div>${rows.length > DET.shown ? `<button type="button" class="btn btn-sm" id="det-more" style="margin-top:10px">Show ${Math.min(100, rows.length - DET.shown)} more of ${fmtInt(rows.length - DET.shown)}</button>` : ""}`
+        : `<p class="muted">No rows at this score.</p>`;
+      $("#det-more", el)?.addEventListener("click", () => { DET.shown += 100; drawRows(); });
+    };
+    const drawDups = () => {
+      const box = $("#det-dups", el);
+      if (!dir) { box.innerHTML = ""; return; }
+      const pairs = dir.dupList.filter((d) => d[3] != null).sort((a, b) => b[3] - a[3]);
+      box.innerHTML = pairs.length ? `<div class="table-wrap"><table class="det-table"><thead><tr><th>Same person</th><th>Person A</th><th>Person B</th><th>Why</th></tr></thead><tbody>
+        ${pairs.slice(0, DET.dupShown).map((d) => `<tr><td class="nowrap">${pctBar(d[3])}</td>
+          <td><a href="${toTree(d[1][0])}">${esc(dir.people[d[1][0]].name)}</a><div class="muted small">${esc(dir.people[d[1][0]].city || dir.people[d[1][0]].province || "")}</div></td>
+          <td><a href="${toTree(d[1][1])}">${esc(dir.people[d[1][1]].name)}</a><div class="muted small">${esc(dir.people[d[1][1]].city || dir.people[d[1][1]].province || "")}</div></td>
+          <td>${d[4].map((r) => `<span class="schip pos">${esc(r)}</span>`).join("")}${d[5].map((r) => `<span class="schip neg">${esc(r)}</span>`).join("")}</td></tr>`).join("")}
+        </tbody></table></div>${pairs.length > DET.dupShown ? `<button type="button" class="btn btn-sm" id="dup-more" style="margin-top:10px">Show more (${fmtInt(pairs.length - DET.dupShown)})</button>` : ""}`
+        : `<p class="muted">No candidate pairs.</p>`;
+      $("#dup-more", el)?.addEventListener("click", () => { DET.dupShown += 100; drawDups(); });
+    };
+    const drawUnnamed = () => {
+      const box = $("#det-unnamed", el);
+      if (!box || !dir) return;
+      const list = [...dir.unnamedWhy.entries()];
+      box.innerHTML = list.length ? `<div class="tf-h" style="margin-top:12px">Who (first ${Math.min(30, list.length)})</div><div class="un-list">${list.slice(0, 30).map(([i, u]) => {
+        const p = dir.people[i];
+        return `<a class="un-item" href="${toTree(i)}"><span class="ini" style="background:var(--c9)">?</span><span><b>${esc(p.name.replace("No name · ", ""))}</b><small>${esc(p.roles.map(roleName).join(", "))} · ${esc(u.srcs.join(", "))}</small></span></a>`;
+      }).join("")}</div>` : "";
+    };
+    $("#det-q", el).addEventListener("input", (e) => { DET.q = e.target.value; DET.shown = 40; drawRows(); });
+    $("#det-level", el).addEventListener("change", (e) => { DET.level = e.target.value; DET.shown = 40; drawRows(); });
+    $("#det-src", el).addEventListener("change", (e) => { DET.source = e.target.value; DET.shown = 40; drawRows(); });
+    drawRows(); drawDups(); drawUnnamed();
+  }
+
   function peopleAnomalies(P) {
     const review = Object.entries(P.review || {});
-    return `
+    return (P.detector ? `<div id="pdetect"></div>` : "") + `
       <div class="card" style="margin-bottom:16px"><h3>Anomalies</h3><div class="sub muted small" style="margin-bottom:8px">Rows can have more than one. Errors are excluded from the dataset; warnings and info stay and are listed in the Anomalies tab of the PEOPLE sheet.</div>
         <div class="table-wrap"><table><thead><tr><th>Rule</th><th>Severity</th><th>What it means</th><th>Action</th><th class="num">Rows</th><th>Where</th></tr></thead><tbody>
         ${P.anomalies.map((a) => `<tr><td class="mono small">${esc(a.rule)}</td><td>${badge(SEV[a.severity] || "ok", a.severity)}</td><td>${esc(a.description)}</td><td>${esc(a.action)}</td><td class="num">${fmtInt(a.count)}</td>

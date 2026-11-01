@@ -29,6 +29,7 @@ import knowledge  # noqa: E402
 import lakehouse  # noqa: E402
 import people as P  # noqa: E402
 import people_gold as G  # noqa: E402
+import people_anomaly as A  # noqa: E402
 import people_lineage  # noqa: E402
 from exports import GoogleSheets, LocalSheets, table  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
@@ -36,7 +37,7 @@ from sources import GoogleSource  # noqa: E402
 from storage import DriveStorage, LocalStorage  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TASK_KEYS = ("read", "normalize", "resolve", "gold", "build", "store", "publish")
+TASK_KEYS = ("read", "normalize", "resolve", "gold", "detect", "build", "store", "publish")
 K = 5  # small-group rule for people counts on the site
 MAX_RUNS = 50
 
@@ -227,6 +228,28 @@ def pairing_tabs(pairings: list[dict]) -> list[dict]:
     return out
 
 
+def write_detect(con, records, dups: list[dict], result: dict) -> None:
+    con.execute("ALTER TABLE people.records ADD COLUMN IF NOT EXISTS dummy_probability DOUBLE")
+    con.execute("ALTER TABLE people.records ADD COLUMN IF NOT EXISTS dummy_level VARCHAR")
+    con.execute("ALTER TABLE people.records ADD COLUMN IF NOT EXISTS dummy_reasons VARCHAR")
+    con.execute("CREATE TEMP TABLE _scores (source VARCHAR, sheet_row BIGINT, p DOUBLE, lvl VARCHAR, why VARCHAR)")
+    con.executemany("INSERT INTO _scores VALUES (?,?,?,?,?)", [
+        [r.source, r.sheet_row, round(r.dummy_p, 4), A.level(r.dummy_p), "; ".join(label for _, label, _ in r.dummy_reasons)] for r in records])
+    con.execute("""UPDATE people.records AS t SET dummy_probability = s.p, dummy_level = s.lvl, dummy_reasons = s.why
+                   FROM _scores s WHERE t.source = s.source AND t.sheet_row = s.sheet_row""")
+    con.execute("DROP TABLE _scores")
+    con.execute("""CREATE OR REPLACE TABLE people.anomalies AS
+                   SELECT source, sheet_row, unnest(string_split(anomalies, ', ')) AS rule, label, year, email_raw, full_name, excluded,
+                          dummy_probability FROM people.records WHERE anomalies <> ''""")
+    people = {p["person_id"]: p for p in result["people"]}
+    con.execute("""CREATE OR REPLACE TABLE people.duplicate_candidates (probability DOUBLE, type VARCHAR, reasons VARCHAR, person_a VARCHAR,
+                   name_a VARCHAR, email_a VARCHAR, person_b VARCHAR, name_b VARCHAR, email_b VARCHAR, name_similarity DOUBLE, review_id VARCHAR)""")
+    con.executemany("INSERT INTO people.duplicate_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?)", [
+        [d["probability"], d["type"], "; ".join(f"{label} ({w:+.1f})" for _, label, w in d["reasons"]), d["a"], people[d["a"]]["full_name"],
+         people[d["a"]]["email"], d["b"], people[d["b"]]["full_name"], people[d["b"]]["email"], d["name_similarity"], d["review_id"]]
+        for d in dups])
+
+
 def write_gold(con, built: dict, mentorships: list[dict]) -> None:
     gold = built["gold"]
     cols = list(gold[0].keys()) if gold else ["person_id"]
@@ -338,21 +361,39 @@ def main() -> int:
             links, pair_inventory = G.read_pairings(config.get("pairings", []), tabs, result, records)
             return G.build(records, result, links, places), links, pair_inventory
         built, links, pair_inventory = step("gold", gold)
+
+        def detect():
+            for r in records:
+                r.dummy_p, r.dummy_reasons = A.dummy_score(r)
+            dups = A.duplicate_candidates(result, records, {g["person_id"]: g for g in built["gold"]}, result["review"])
+            summary = A.summary(records, inventory, dups)
+            summary["unnamed"] = A.unnamed(records, result, inventory)
+            return dups, summary
+        dups, detector = step("detect", detect)
         payload = step("build", aggregates, records, result, inventory, config["labels"], config)
         payload["gold"] = G.site_aggregates(built, links, pair_inventory, K)
-        directory = G.directory(built, links, result["review"]) if config.get("publish_directory") else None
+        unnamed_rows = detector["unnamed"].pop("rows")
+        payload["detector"] = detector
+        directory = G.directory(built, links, result["review"], dups, records, {s["key"]: s["title"] for s in inventory}, unnamed_rows) \
+            if config.get("publish_directory") else None
 
         def store():
             write_tables(con, records, result, inventory)
             write_gold(con, built, links)
+            write_detect(con, records, dups, result)
             sizes = {f"people.{t}": lakehouse.save(con, storage, "people", t)
-                     for t in ("records", "people", "activities", "anomalies", "review", "sources") + GOLD_TABLES}
+                     for t in ("records", "people", "activities", "anomalies", "review", "sources", "duplicate_candidates") + GOLD_TABLES}
             link = None
             if writer is not None:
                 tabs_out = {
                     "Gold": table(con, "SELECT * FROM people.gold_people ORDER BY full_name NULLS LAST"),
                     "Mentorships": table(con, "SELECT * FROM people.mentorships ORDER BY program, year, mentor_name, mentee_name"),
                     "Events": table(con, "SELECT * FROM people.events ORDER BY event_year DESC, participants DESC"),
+                    "Dummy check": table(con, """SELECT round(dummy_probability * 100) AS dummy_pct, dummy_level, dummy_reasons, source, sheet_row,
+                                                 full_name, email_raw, excluded FROM people.records WHERE dummy_probability >= 0.5
+                                                 ORDER BY dummy_probability DESC, source, sheet_row"""),
+                    "Duplicate check": table(con, """SELECT round(probability * 100) AS same_person_pct, type, reasons, name_a, email_a, name_b,
+                                                     email_b, person_a, person_b, review_id FROM people.duplicate_candidates ORDER BY probability DESC"""),
                     "People": table(con, "SELECT * FROM people.people ORDER BY full_name NULLS LAST"),
                     "Activities": table(con, "SELECT * FROM people.activities ORDER BY person_id, activity_year, label"),
                     "Anomalies": table(con, "SELECT * FROM people.anomalies ORDER BY excluded DESC, rule, source, sheet_row"),
@@ -365,6 +406,8 @@ def main() -> int:
                               ["labels", "from [Data-020] glossary; MASTER_* mirror PHD_* until the glossary defines them"],
                               ["Gold", "one row per person: roles, where they live (city, province, island region), birth place, study and target country, institution, events attended, mentees mentored"],
                               ["Mentorships", "mentor-mentee pairs from the pairing sheets; match = how each side was found (email, phone, name)"],
+                              ["Dummy check", "rows with a dummy-data probability of 50% or more, with the signals behind each score (estimates: check before deleting)"],
+                              ["Duplicate check", "pairs of people that may be one person, with a probability and its signals; never merged automatically"],
                               ["graph", "people.graph_nodes and people.graph_edges in the lakehouse (SQL editor): ATTENDED, SPOKE_AT, MENTORED, LIVES_IN, BORN_IN, STUDIED_IN, TARGETS, STUDIED_AT, HAS_ROLE"]]),
                 }
                 link = writer.upsert("outputs", "PEOPLE", tabs_out)

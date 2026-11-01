@@ -20,15 +20,16 @@ STEP_INFO = {
     "events": ("people.events", "table", 3, "One row per event name and year, with participant, speaker and committee counts."),
     "mentorships": ("people.mentorships", "table", 3, "Mentor-mentee pairs: each side matched to a person by email, else a unique phone, else a unique exact name; program, year and match type."),
     "gold": ("people.gold_people", "table", 4, "People gold: one row per person with roles, places, origin, study, years with IM, events, mentees and links."),
-    "graph": ("people.graph_*", "table", 5, "Person-level graph: people, events, places, institutions and roles, linked by ATTENDED, MENTORED, LIVES_IN…"),
-    "aggregates": ("Site aggregates", "step", 5, "Counts by role and region, groups under 5 hidden, sealed with the site PIN (people.json)."),
-    "directory": ("People directory", "step", 5, "Names, roles, places, study, years, events, mentees, mentor pairs, possible duplicates and links for the tree (people_directory.json, sealed)."),
-    "lakehouse": ("Lakehouse (Parquet)", "store", 6, "Every people.* table (records, people, activities, anomalies, review, events, mentorships, gold, graph) as people/*.parquet in the Shared Drive (or this run only, until the folder is set)."),
-    "out_pages": ("People pages", "output", 7, "People gold, Dedup overview, Anomalies, Sources and Runs tabs on this site."),
-    "out_tree": ("People tree", "output", 7, "The Tree tab: hierarchy down to names, search and filters."),
-    "out_ask": ("Ask", "output", 7, "Knowledge passages built from the aggregates, for the Ask page."),
-    "out_sheet": ("PEOPLE sheet", "output", 7, "Gold, Mentorships, Events, People, Activities, Anomalies, Review, Sources and About tabs in the Shared Drive."),
-    "out_sql": ("SQL editor", "output", 7, "people.* tables queryable through the query workflow; results land in a preview sheet for 2 hours."),
+    "detect": ("Anomaly detection", "step", 5, "Probability that each row is dummy data and that two people are one person, with the signals behind every score (people.records.dummy_probability, people.duplicate_candidates)."),
+    "graph": ("people.graph_*", "table", 6, "Person-level graph: people, events, places, institutions and roles, linked by ATTENDED, MENTORED, LIVES_IN…"),
+    "aggregates": ("Site aggregates", "step", 6, "Counts by role and region, groups under 5 hidden, sealed with the site PIN (people.json)."),
+    "directory": ("People directory", "step", 6, "Names, roles, places, study, years, events, mentees, mentor pairs, possible duplicates and links for the tree (people_directory.json, sealed)."),
+    "lakehouse": ("Lakehouse (Parquet)", "store", 7, "Every people.* table (records, people, activities, anomalies, review, events, mentorships, gold, graph) as people/*.parquet in the Shared Drive (or this run only, until the folder is set)."),
+    "out_pages": ("People pages", "output", 8, "People gold, Dedup overview, Anomalies, Sources and Runs tabs on this site."),
+    "out_tree": ("People tree", "output", 8, "The Tree tab: hierarchy down to names, search and filters."),
+    "out_ask": ("Ask", "output", 8, "Knowledge passages built from the aggregates, for the Ask page."),
+    "out_sheet": ("PEOPLE sheet", "output", 8, "Gold, Mentorships, Events, People, Activities, Anomalies, Review, Sources and About tabs in the Shared Drive."),
+    "out_sql": ("SQL editor", "output", 8, "people.* tables queryable through the query workflow; results land in a preview sheet for 2 hours."),
 }
 
 # gold column -> (attributes or identity fields that feed it, rule)
@@ -97,6 +98,7 @@ def build(inventory: list[dict], pair_inventory: list[dict], records, result: di
         "activities": (len(result["activities"]), "activities"),
         "review": (len(result["review"]), "items"), "events": (len(built["events"]), "events"),
         "mentorships": (len(links), "pairs"), "gold": (len(built["gold"]), "people"),
+        "detect": (sum(1 for r in records if r.dummy_p >= 0.5), "rows ≥ 50%"),
         "graph": (len(built["nodes"]) + len(built["edges"]), "nodes + edges"), "aggregates": (None, ""),
         "directory": (len(built["gold"]) if config.get("publish_directory") else 0, "people"),
         "lakehouse": (None, ""), "out_pages": (None, ""), "out_tree": (None, ""), "out_ask": (None, ""),
@@ -133,6 +135,10 @@ def build(inventory: list[dict], pair_inventory: list[dict], records, result: di
     for b in ("graph", "aggregates", "directory", "lakehouse"):
         e("gold", b)
     e("graph", "lakehouse")
+    e("records", "detect", len(records))
+    e("gold", "detect")
+    for b in ("aggregates", "directory", "lakehouse"):
+        e("detect", b)
     e("aggregates", "out_pages")
     e("aggregates", "out_ask")
     e("directory", "out_tree")

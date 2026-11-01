@@ -109,7 +109,7 @@ def test_people_job_end_to_end(tmp_path):
     acts = f"read_parquet('{lake}/lakehouse/people/activities.parquet')"
     assert con.execute(f"SELECT count(*) - count(DISTINCT (person_id, label, activity_year, status)) FROM {acts}").fetchone()[0] == 0
     sheet = json.loads((lake / "sheets" / "outputs" / "PEOPLE.json").read_text())
-    assert set(sheet["tabs"]) == {"Gold", "Mentorships", "Events", "People", "Activities", "Anomalies", "Review", "Sources", "About"}
+    assert set(sheet["tabs"]) == {"Gold", "Mentorships", "Events", "Dummy check", "Duplicate check", "People", "Activities", "Anomalies", "Review", "Sources", "About"}
 
 
 def test_people_ids_are_stable_between_runs(tmp_path):
@@ -253,7 +253,9 @@ def test_directory_has_names_but_no_contact_details(gold_run, tmp_path):
     assert len(d["people"]) == doc["kpis"]["people"]
     assert any(p[0] == "Dimas Wijaya" for p in d["people"])
     blob = json.dumps(d)
-    for leaked in ("@", "+62", "IMP-", "1/2/1998"):
+    import re
+    assert not re.search(r"[a-z0-9._%+-]{2,}@[a-z0-9-]+\.[a-z]", blob), "only masked emails (t***@domain) may appear"
+    for leaked in ("+62", "IMP-", "14/7/1996"):
         assert leaked not in blob
     people = [dict(zip(d["fields"], p)) for p in d["people"]]
     # Links people gave are cleaned to profile URLs; years with IM counts distinct active years.
@@ -319,3 +321,59 @@ def test_lineage_is_a_left_to_right_dag_with_consistent_counts(gold_run):
     blob = json.dumps(L)
     for leaked in ("@gmail", "+62812", "Dimas", "IMP-"):
         assert leaked not in blob
+
+
+def test_dummy_probability_ranks_planted_rows(gold_run):
+    con, doc, lake = gold_run
+    rec = f"read_parquet('{lake}/lakehouse/people/records.parquet')"
+    p = dict(con.execute(f"SELECT full_name, max(dummy_probability) FROM {rec} GROUP BY 1").fetchall())
+    for dummy in ("Test Test", "asdf", "aaaa", "John Doe", "Fulan"):
+        assert p[dummy] >= 0.8, dummy
+    assert 0.4 <= p["Bdfghjk Trwqzx"] < 0.8
+    # Real people, including one who typed lorem ipsum in a single answer, stay low.
+    for real in ("Nadia Putri", "Dimas Wijaya", "Budi Santoso"):
+        assert p[real] < 0.2, real
+    d = doc["detector"]["dummy"]
+    assert d["likely"] + d["suspicious"] + d["clean"] == d["rows"] == doc["kpis"]["records"]
+    assert sum(b["count"] for b in d["hist"]) == d["rows"]
+    # Every score keeps its reasons.
+    why = con.execute(f"SELECT dummy_reasons FROM {rec} WHERE full_name = 'John Doe'").fetchone()[0]
+    assert "Placeholder name" in why and "Placeholder phone" in why
+
+
+def test_duplicate_probability(gold_run):
+    con, doc, lake = gold_run
+    dup = f"read_parquet('{lake}/lakehouse/people/duplicate_candidates.parquet')"
+    p = {tuple(sorted((a, b))): pr for pr, a, b in con.execute(f"SELECT probability, name_a, name_b FROM {dup}").fetchall()}
+    assert p[("Rara Kinasih", "Rara Kinasih")] >= 0.9                          # same phone and name
+    assert p[("M. Rizki Pratama", "Muhammad Rizky Pratama")] >= 0.8           # found by similarity, same birthday
+    assert p[("Rina Agustina", "Tono Baskoro")] < 0.2                          # shared phone, different people
+    assert 0.2 < p[("Dewi Lestari", "Dewi Lestari")] < 0.8                     # namesakes: for a person to check
+
+
+def test_jaro_winkler_and_name_similarity():
+    import people_anomaly as A
+    assert A.jaro_winkler("martha", "marhta") > 0.95 and A.jaro_winkler("abc", "xyz") == 0
+    assert A._name_sim("M. Rizki Pratama", "Muhammad Rizky Pratama") >= 0.92
+    assert A._name_sim("Rina Agustina", "Tono Baskoro") < 0.6
+    assert A.mask_email("Budi.Santoso@ui.ac.id") == "b****@ui.ac.id"
+
+
+@pytest.mark.parametrize("raw, shown", [
+    ("BIMA YATNA ANUGERAH RAMADHAN", "Bima Yatna Anugerah Ramadhan"), ("annisa putri", "Annisa Putri"),
+    ("  dewi   LESTARI ", "Dewi Lestari"), ("McDonald HAKIM", "McDonald Hakim"), ("muhammad BIN abdullah", "Muhammad bin Abdullah"),
+    ("M. rizki PRATAMA", "M. Rizki Pratama"), ("siti nur-aini", "Siti Nur-Aini"), ("o'brien", "O'Brien"),
+])
+def test_proper_name(raw, shown):
+    assert P.proper_name(raw) == shown
+
+
+def test_gold_names_are_never_all_caps_or_all_lowercase(gold_run):
+    con, _, _ = gold_run
+    names = [r[0] for r in con.execute("SELECT full_name FROM gold_people WHERE full_name IS NOT NULL").fetchall()]
+    assert "Bima Yatna Anugerah Ramadhan" in names
+    for n in names:
+        for w in n.split():
+            letters = [c for c in w if c.isalpha()]
+            if len(letters) > 1 and w.lower() not in P.NAME_PARTICLES:
+                assert not all(c.isupper() for c in letters) and not all(c.islower() for c in letters), n

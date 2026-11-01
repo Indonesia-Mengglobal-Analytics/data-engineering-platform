@@ -538,23 +538,25 @@ def aggregate_graph(gold: list[dict], events: list[dict], mentorships: list[dict
 DIRECTORY_FIELDS = ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
                     "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had",
                     "birth_city", "birth_province", "birth_region", "origin_country", "years_with_im", "linkedin", "profile",
-                    "email_variants"]
+                    "email_variants", "email_hint"]
 
 
-def directory(built: dict, mentorships: list[dict], review: list[dict] | None = None) -> dict:
+def directory(built: dict, mentorships: list[dict], review: list[dict] | None = None, dups: list[dict] | None = None,
+              records: list | None = None, titles: dict | None = None, unnamed: list | None = None) -> dict:
     """Names for the site's tree view, only when config people.publish_directory is true.
 
     Deliberately minimal: no email, phone, LinkedIn, birth date or birth place. People are referred to
     by their position in the list, not by person_id.
     """
-    gold = sorted(built["gold"], key=lambda g: (g["full_name"] or "").lower())
+    gold = sorted(built["gold"], key=lambda g: (not g["full_name"], (g["full_name"] or g["email"] or "").lower()))
     index = {g["person_id"]: i for i, g in enumerate(gold)}
-    people = [[g["full_name"] or "(no name)", [r for r in ROLE_ORDER if g[f"is_{r.lower()}"]], g["residence_city"],
+    hints = {u["person_id"]: u["email_masked"] for u in (unnamed or [])}
+    people = [[g["full_name"] or "", [r for r in ROLE_ORDER if g[f"is_{r.lower()}"]], g["residence_city"],
                g["residence_province"], g["residence_island_region"], g["residence_country"], g["study_country"],
                g["target_country"], g["institution"], g["first_year"], g["last_year"], g["events_attended"],
                g["events_spoken"], g["mentees_mentored"], g["mentors_had"], g["birth_city"], g["birth_province"],
                g["birth_island_region"], g["origin_country"], g["years_with_im"], g["linkedin_url"], g["profile_url"],
-               g["email_variants"]] for g in gold]
+               g["email_variants"], hints.get(g["person_id"]) if not g["full_name"] else None] for g in gold]
     pairs = [[index[m["mentor_id"]], index[m["mentee_id"]], m["program"], m["year"]] for m in mentorships
              if m["mentor_id"] in index and m["mentee_id"] in index]
     events = []
@@ -563,7 +565,24 @@ def directory(built: dict, mentorships: list[dict], review: list[dict] | None = 
         events.append([e["event_name"], e["event_year"], sorted(index[p] for p in ids["participants"] if p in index),
                        sorted(index[p] for p in ids["speakers"] if p in index), sorted(index[p] for p in ids["committee"] if p in index)])
     # Possible duplicates from the review queue: same phone, same name, or one email with different names.
-    duplicates = [[r["type"], [index[p] for p in r["person_ids"] if p in index], r["detail"]] for r in (review or [])]
-    duplicates = [d for d in duplicates if d[1]]
+    # Possible duplicates: scored pairs (with probability and signals), plus single-person review items.
+    unnamed_list = [[index[u["person_id"]], u["cause"], [(titles or {}).get(x, x) for x in u["sources"]]]
+                    for u in (unnamed or []) if u["person_id"] in index]
+    duplicates = [[d["type"], [index[d["a"]], index[d["b"]]], f"{round(d['probability'] * 100)}% likely the same person",
+                   round(d["probability"], 3), [label for _, label, w in d["reasons"] if w > 0], [label for _, label, w in d["reasons"] if w < 0]]
+                  for d in (dups or []) if d["a"] in index and d["b"] in index]
+    duplicates += [[r["type"], [index[p] for p in r["person_ids"] if p in index], r["detail"], None, [], []]
+                   for r in (review or []) if len(r["person_ids"]) == 1 and r["person_ids"][0] in index]
+    # Rows that look like dummy data (50% or more): masked email, never the full address.
+    import people_anomaly as A
+    suspects = []
+    for r in sorted(records or [], key=lambda r: -r.dummy_p):
+        if r.dummy_p < A.SUSPICIOUS:
+            break
+        pid = P.person_id(r.email) if r.email and not r.excluded else None
+        suspects.append([(titles or {}).get(r.source, r.source), r.sheet_row, r.name or str(r.name_raw or "") or "(no name)",
+                         A.mask_email(r.email_raw), round(r.dummy_p, 3), [label for _, label, _ in r.dummy_reasons], r.excluded,
+                         index.get(pid) if pid else None])
     return {"fields": DIRECTORY_FIELDS, "people": people, "mentorships": pairs, "events": events, "duplicates": duplicates,
+            "suspects": suspects[:2000], "unnamed": unnamed_list,
             "event_fields": ["name", "year", "participants", "speakers", "committee"]}

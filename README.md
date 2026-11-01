@@ -169,6 +169,35 @@ or research-profile link they gave us. Without one, a **Search LinkedIn** button
 name and campus: a suggestion for a team member to check, never stored. Profiles are not crawled or guessed. The tree reads `people_directory.json`, written only while
 `publish_directory: true` in `config/people.yml`.
 
+### Anomaly detection
+
+The `detect` step (`pipeline/people_anomaly.py`) gives every source row a **probability of being dummy data** and every
+pair of people that may be one person a **probability of being the same person**. Each signal adds evidence (log-odds)
+and a logistic turns the sum into a percentage; every score keeps its reasons. These are estimates to rank what to check,
+not a trained model, and nothing is deleted or merged because of them.
+
+| Dummy signals (weight) | Same-person signals (weight) |
+|---|---|
+| test or throwaway email domain (+6.0), email name is a test word (+4.5), placeholder name such as John Doe or Fulan (+4.5), test word as name (+4.0), keyboard run (+3.5), one letter repeated (+3.0), placeholder or sequential phone (+2.2), random letters (+2.2), lorem ipsum / test / dummy typed in the row (+2.0), invalid or missing email, digits in the name, impossible year, duplicate submission | same phone (+3.4), same date of birth (+3.0), same full name (+2.6), very similar name with initials allowed (+1.8), similar email user name (+1.6), same institution (+0.8), same city (+0.5); clearly different names (−3.0) and different dates of birth (−3.5) lower it |
+
+80% or more is **likely**, 50–79% **suspicious**. Results: `people.records.dummy_probability`, `dummy_reasons`,
+`people.duplicate_candidates`, and the **Dummy check** and **Duplicate check** tabs of the PEOPLE sheet. Besides the review
+list, similar names are found by blocking (first initial + surname, first name + surname initial), so "M. Rizki Pratama"
+meets "Muhammad Rizky Pratama".
+
+**People → Anomalies & review** shows the counts, both probability histograms, the signals with their weights, the rows to
+check (masked emails), the duplicate pairs, and **people without a name**: real addresses that only appear in sheets with
+no name column (for example the management Accepted/Applied tabs and the PhD bootcamp lists) or that left the name blank.
+They show in the tree as "No name · b****@gmail.com" until a name column is added to those sheets.
+
+### Names
+
+Names follow one display standard everywhere (gold table, PEOPLE sheet, tree, SQL): word by word, ALL CAPS and all
+lowercase become proper case ("BIMA YATNA" → "Bima Yatna"), mixed case is kept as typed ("McDonald"), capitals follow
+hyphens and apostrophes ("Nur-Aini", "O'Brien"), and joining words such as bin, binti, van stay lowercase. Raw records keep
+the name exactly as typed. Labels in the tree and lineage are fitted by measured pixel width, so long names never run
+under a badge; the full name shows on hover.
+
 ### Lineage
 
 **People → Lineage** maps the dataset from every Google Sheet tab to every place it is shown, with this run's counts:
