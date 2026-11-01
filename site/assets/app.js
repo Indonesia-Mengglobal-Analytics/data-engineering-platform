@@ -265,12 +265,16 @@
   const WATCH = { sig: null, timer: null, busy: false };
   async function dataSignature() {
     const files = [...FILES, ...OPTIONAL_FILES, "knowledge"];
+    let version = "";
+    try { const r = await fetch(`version.txt?probe=${Date.now()}`, { cache: "no-store" }); if (r.ok) version = (await r.text()).trim(); } catch { /* local or first deploy */ }
     const parts = await Promise.all(files.map(async (f) => {
       try {
         const r = await fetch(`data/${f}.json?probe=${Date.now()}`, { method: "HEAD", cache: "no-store" });
         return r.ok ? `${f}:${r.headers.get("etag") || ""}:${r.headers.get("last-modified") || ""}:${r.headers.get("content-length") || ""}` : `${f}:-`;
       } catch { return `${f}:?`; }
     }));
+    WATCH.version ??= version;
+    WATCH.newVersion = version && WATCH.version && version !== WATCH.version;
     return parts.join("|");
   }
   async function checkData() {
@@ -278,11 +282,12 @@
     WATCH.busy = true;
     try {
       const sig = await dataSignature();
-      if (WATCH.sig && sig !== WATCH.sig && !sig.includes(":?")) showDataBanner();
+      if (WATCH.newVersion) showDataBanner(true);
+      else if (WATCH.sig && sig !== WATCH.sig && !sig.includes(":?")) showDataBanner();
       if (!WATCH.sig) WATCH.sig = sig;
     } finally { WATCH.busy = false; }
   }
-  function showDataBanner() {
+  function showDataBanner(newSite = false) {
     let b = $("#data-banner");
     if (!b) {
       b = document.createElement("div");
@@ -291,9 +296,11 @@
       b.setAttribute("role", "status");
       document.body.appendChild(b);
     }
-    b.innerHTML = `<span><b>New data published</b> by GitHub Actions.</span><button type="button" class="btn btn-sm btn-primary" id="data-reload">Refresh</button><button type="button" class="icon-btn" id="data-dismiss" aria-label="Dismiss">✕</button>`;
+    b.innerHTML = newSite
+      ? `<span><b>A new version of the site</b> is out.</span><button type="button" class="btn btn-sm btn-primary" id="data-reload">Reload</button><button type="button" class="icon-btn" id="data-dismiss" aria-label="Dismiss">✕</button>`
+      : `<span><b>New data published</b> by GitHub Actions.</span><button type="button" class="btn btn-sm btn-primary" id="data-reload">Refresh</button><button type="button" class="icon-btn" id="data-dismiss" aria-label="Dismiss">✕</button>`;
     b.hidden = false;
-    $("#data-reload").addEventListener("click", reloadData);
+    $("#data-reload").addEventListener("click", newSite ? () => location.reload() : reloadData);
     $("#data-dismiss").addEventListener("click", () => (b.hidden = true));
   }
   async function reloadData() {

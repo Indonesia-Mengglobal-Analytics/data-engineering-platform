@@ -116,6 +116,11 @@ jobs:
         if: always()
         run: rm -rf build previous
 
+      # New script and style addresses on every deploy, so no browser keeps an old copy of the site.
+      - name: Version the site assets
+        run: |
+          sed -i -E "s/(app\.(js|css))\?v=[^\"]*/\1?v=${GITHUB_SHA::12}/g" site/index.html
+          echo "${GITHUB_SHA::12}" > site/version.txt
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
