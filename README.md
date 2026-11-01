@@ -229,6 +229,24 @@ downstream and see its description, inputs, outputs and columns; pick a gold col
 rule that builds it and the exact source headers that feed it. It is built by `pipeline/people_lineage.py` into
 `people.json` (counts and header names only).
 
+### One site, two jobs
+
+Every page reads both jobs' files, so a new run of either shows up everywhere:
+
+| Page | From the main pipeline | From the people job |
+|---|---|---|
+| Workspace | sources, records, last run, withheld columns | People and People-to-check tiles, people tables in Recents, both jobs in Recent job runs, people issues in Need attention |
+| Catalog | `sheets.bronze/silver/gold.*` | a `people` catalog: every `people.*` table with columns, types, descriptions, tags and where each column is shown (built from the tables the run wrote) |
+| Jobs & Pipelines, Job Runs | `sheets_to_duckdb` | `people_dataset`, runs of both jobs in one list |
+| Data Ingestion | registered sheets | the people source tabs and pairing sheets with their status |
+| Governance | per-source classification | the people dataset: tags, which site file holds what, personal columns and where they appear, whether names are published |
+| Data Quality | quality rules per sheet | people anomaly rules and the detection counts |
+| SQL Editor, search | `sheets` tables and columns | `people.*` tables and columns, example queries, and people by name (opens them in the Tree) |
+| Ask | catalog, dashboards, runs | people counts and gold passages |
+
+The sidebar shows when each job last refreshed. An open tab checks the published files every 2 minutes (and when it
+comes back into view); after a deploy it shows **New data published · Refresh**, which reloads the data in place.
+
 The two workflows deploy to the same Pages site. Each downloads the files the other published and carries them forward.
 Run the main pipeline once before the first people run.
 

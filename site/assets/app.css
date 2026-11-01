@@ -665,3 +665,11 @@ table.heat thead th { white-space: normal; min-width: 64px; font-weight: 500; }
 .tn-label.grp { font-weight: 600; }
 .tn-label.grp.two { font-size: 12px; }
 .tn-root .tn-cap { fill: rgba(255, 255, 255, .75); }
+
+/* new data banner */
+.data-banner { position: fixed; right: 20px; bottom: 20px; z-index: 1000; display: flex; gap: 10px; align-items: center; background: var(--bg);
+  border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: 10px; padding: 10px 12px; box-shadow: 0 12px 32px rgba(16, 24, 40, .18);
+  font-size: 13.5px; animation: banner-in .25s ease; }
+@keyframes banner-in { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .data-banner { animation: none; } }
+.schema-sub > summary { list-style: none; cursor: pointer; }

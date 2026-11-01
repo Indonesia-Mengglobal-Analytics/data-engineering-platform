@@ -103,6 +103,13 @@
   const sources = () => D.catalog.sources || [];
   const registered = () => sources().filter((s) => s.status === "registered");
   const runs = () => D.jobs.runs || [];
+  // Both GitHub Actions jobs (main pipeline and people dataset), newest first, each tagged with its job.
+  const peopleRuns = () => (D.people?.runs || []).map((r) => ({ ...r, job: "people_dataset" }));
+  const allRuns = () => [...runs().map((r) => ({ ...r, job: "sheets_to_duckdb" })), ...peopleRuns()]
+    .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+  const runHref = (r) => (r.job === "people_dataset" ? `#/people/runs/${encodeURIComponent(r.run_id)}` : `#/runs/${encodeURIComponent(r.run_id)}`);
+  const peopleTables = () => D.people?.catalog?.tables || [];
+  const peopleTable = (t) => peopleTables().find((x) => x.name === t);
   const tableName = (s) => (s.fqn || "").split(".").pop();
   const sourceByTable = (t) => registered().find((s) => tableName(s) === t);
   const repoUrl = () => `https://github.com/${D.jobs.workflow.repository}`;
@@ -219,11 +226,72 @@
     }
     store.set("im_pin", pin);
     PIN = pin;
+    watchData();
     $("#login").hidden = true;
     $("#app").hidden = false;
     buildSearch();
     route();
     return true;
+  }
+
+  // ---------- new data from GitHub Actions ----------
+  // Both jobs deploy the whole site. Every 2 minutes (and when the tab comes back into view) the published files are
+  // checked; when one changed, a banner offers to reload the data in place, keeping the page and the PIN.
+  const WATCH = { sig: null, timer: null, busy: false };
+  async function dataSignature() {
+    const files = [...FILES, ...OPTIONAL_FILES, "knowledge"];
+    const parts = await Promise.all(files.map(async (f) => {
+      try {
+        const r = await fetch(`data/${f}.json?probe=${Date.now()}`, { method: "HEAD", cache: "no-store" });
+        return r.ok ? `${f}:${r.headers.get("etag") || ""}:${r.headers.get("last-modified") || ""}:${r.headers.get("content-length") || ""}` : `${f}:-`;
+      } catch { return `${f}:?`; }
+    }));
+    return parts.join("|");
+  }
+  async function checkData() {
+    if (WATCH.busy || !D) return;
+    WATCH.busy = true;
+    try {
+      const sig = await dataSignature();
+      if (WATCH.sig && sig !== WATCH.sig && !sig.includes(":?")) showDataBanner();
+      if (!WATCH.sig) WATCH.sig = sig;
+    } finally { WATCH.busy = false; }
+  }
+  function showDataBanner() {
+    let b = $("#data-banner");
+    if (!b) {
+      b = document.createElement("div");
+      b.id = "data-banner";
+      b.className = "data-banner";
+      b.setAttribute("role", "status");
+      document.body.appendChild(b);
+    }
+    b.innerHTML = `<span><b>New data published</b> by GitHub Actions.</span><button type="button" class="btn btn-sm btn-primary" id="data-reload">Refresh</button><button type="button" class="icon-btn" id="data-dismiss" aria-label="Dismiss">✕</button>`;
+    b.hidden = false;
+    $("#data-reload").addEventListener("click", reloadData);
+    $("#data-dismiss").addEventListener("click", () => (b.hidden = true));
+  }
+  async function reloadData() {
+    const b = $("#data-banner");
+    if (b) b.innerHTML = `<span>Loading the new data…</span>`;
+    try {
+      D = await loadAll(PIN);
+      WATCH.sig = await dataSignature();
+      fitCache.clear();
+      ASK.kb = null; ASK.index = null;  // Ask reloads its knowledge base on next use
+      buildSearch();
+      route();
+      if (b) b.hidden = true;
+    } catch {
+      if (b) b.innerHTML = `<span>Could not load the new data. Reload the page.</span>`;
+    }
+  }
+  function watchData() {
+    clearInterval(WATCH.timer);
+    WATCH.sig = null;
+    checkData();
+    WATCH.timer = setInterval(checkData, 120000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) checkData(); });
   }
 
   // ---------- router ----------
@@ -237,8 +305,9 @@
     $("#content").innerHTML = render(...rest);
     $("#content").scrollTop = 0;
     $("#sidebar").classList.remove("open");
-    const last = runs()[0];
-    $("#sidebar-foot").innerHTML = last ? `Data refreshed ${esc(ago(last.finished_at))}<br>${badge(last.status)}` : "";
+    const lastMain = runs()[0], lastPeople = peopleRuns()[0];
+    $("#sidebar-foot").innerHTML = [lastMain && `<a href="#/runs">Pipeline</a> ${esc(ago(lastMain.finished_at))} ${badge(lastMain.status)}`,
+      lastPeople && `<a href="#/people/runs">People</a> ${esc(ago(lastPeople.finished_at))} ${badge(lastPeople.status)}`].filter(Boolean).join("<br>");
     afterRender();
   }
   const notFound = () => `<div class="empty"><h2>Page not found</h2><p><a href="#/">Back to workspace</a></p></div>`;
@@ -288,14 +357,25 @@
         <a class="card card-link stat" href="#/catalog"><div class="label">Records in catalog</div><div class="value">${fmtInt(rows)}</div><div class="muted small">${registered().length} table${registered().length === 1 ? "" : "s"} in sheets.gold</div></a>
         <a class="card card-link stat" href="#/runs"><div class="label">Last pipeline run</div><div class="value" style="font-size:20px">${last ? badge(last.status) : "–"}</div><div class="muted small">${last ? `${esc(ago(last.finished_at))} · ${esc(triggerLabel(last.trigger))}` : "No runs yet"}</div></a>
         <a class="card card-link stat" href="#/governance"><div class="label">Columns withheld (PII)</div><div class="value">${withheld}</div><div class="muted small">Groups under ${D.governance.min_group_size} suppressed</div></a>
+        ${D.people?.kpis ? `<a class="card card-link stat" href="#/people"><div class="label">People</div><div class="value">${fmtInt(D.people.kpis.people)}</div><div class="muted small">${D.people.kpis.sources_read} of ${D.people.kpis.sources_configured} sources · ${peopleRuns()[0] ? esc(ago(peopleRuns()[0].finished_at)) : "–"}</div></a>
+        <a class="card card-link stat" href="#/people/anomalies"><div class="label">People to check</div><div class="value">${fmtInt((D.people.detector?.dummy?.likely || 0) + (D.people.detector?.duplicates?.likely || 0))}</div><div class="muted small">${fmtInt(D.people.detector?.dummy?.likely || 0)} likely dummy · ${fmtInt(D.people.detector?.duplicates?.likely || 0)} likely duplicates</div></a>` : ""}
       </div>
       <div class="grid grid-2">
-        <div class="card"><h3>Recents: tables</h3>${registered().length ? `<table><tbody>${registered().map((s) => `
-          <tr><td style="overflow-wrap:anywhere">${icon("table")} <a href="#/catalog/${esc(tableName(s))}">${esc(tableName(s))}</a><div class="muted small">${fmtInt(s.rows)} rows · ${esc(ago(s.ingested_at))}</div></td></tr>`).join("")}</tbody></table>` : `<p class="muted">No registered sources yet.</p>`}</div>
-        <div class="card"><h3>Recent job runs</h3>${runs().length ? `<table><tbody>${runs().slice(0, 6).map((r) => `
-          <tr><td>${badge(r.status)}</td><td><a href="#/runs/${esc(r.run_id)}">${esc(when(r.started_at))}</a></td><td class="muted">${esc(triggerLabel(r.trigger))}</td><td class="num muted">${dur(r.duration_s)}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No runs yet.</p>`}</div>
-        <div class="card"><h3>Dashboards</h3>${Object.entries(D.dashboard.sources || {}).map(([id, d]) => `<p style="margin:4px 0">${icon("dashboard")} <a href="#/dashboards/${esc(id)}">${esc(d.title)}</a></p>`).join("") || `<p class="muted">None yet.</p>`}</div>
-        <div class="card"><h3>Need attention</h3>${sources().filter((s) => s.status !== "registered").map((s) => `<p style="margin:4px 0">${badge(s.status)} <a href="#/ingestion">${esc(s.title)}</a><br><span class="muted small">${esc(s.errors[0] || "")}</span></p>`).join("") || `<p class="muted">Every source is registered and valid.</p>`}</div>
+        <div class="card"><h3>Recents: tables</h3>${registered().length || peopleTables().length ? `<table><tbody>${registered().map((s) => `
+          <tr><td style="overflow-wrap:anywhere">${icon("table")} <a href="#/catalog/${esc(tableName(s))}">${esc(tableName(s))}</a><div class="muted small">${fmtInt(s.rows)} rows · ${esc(ago(s.ingested_at))}</div></td></tr>`).join("")}
+          ${peopleTables().filter((t) => ["gold_people", "mentorships", "duplicate_candidates"].includes(t.name)).map((t) => `
+          <tr><td style="overflow-wrap:anywhere">${icon("table")} <a href="#/catalog/${esc(t.name)}/overview/people">people.${esc(t.name)}</a><div class="muted small">${fmtInt(t.rows)} rows · ${esc(ago(D.people.generated_at))}</div></td></tr>`).join("")}</tbody></table>` : `<p class="muted">No registered sources yet.</p>`}</div>
+        <div class="card"><h3>Recent job runs</h3>${allRuns().length ? `<table><tbody>${allRuns().slice(0, 7).map((r) => `
+          <tr><td>${badge(r.status)}</td><td class="mono small">${esc(r.job)}</td><td class="nowrap"><a href="${runHref(r)}" title="${esc(when(r.started_at))}">${esc(ago(r.finished_at || r.started_at))}</a></td><td class="muted">${esc(triggerLabel(r.trigger))}</td><td class="num muted">${dur(r.duration_s)}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No runs yet.</p>`}</div>
+        <div class="card"><h3>Dashboards</h3>${Object.entries(D.dashboard.sources || {}).map(([id, d]) => `<p style="margin:4px 0">${icon("dashboard")} <a href="#/dashboards/${esc(id)}">${esc(d.title)}</a></p>`).join("")}
+          ${D.people?.kpis ? `<p style="margin:4px 0">${icon("people")} <a href="#/people">People gold</a> <span class="muted small">· <a href="#/people/tree">Tree</a> · <a href="#/people/lineage">Lineage</a> · <a href="#/people/anomalies">Anomalies</a></span></p>` : ""}
+          ${!Object.keys(D.dashboard.sources || {}).length && !D.people?.kpis ? `<p class="muted">None yet.</p>` : ""}</div>
+        <div class="card"><h3>Need attention</h3>${[
+          ...sources().filter((s) => s.status !== "registered").map((s) => `<p style="margin:4px 0">${badge(s.status)} <a href="#/ingestion">${esc(s.title)}</a><br><span class="muted small">${esc(s.errors[0] || "")}</span></p>`),
+          ...(D.people?.sources || []).filter((s) => s.status !== "read").map((s) => `<p style="margin:4px 0">${badge("unreachable", "people source")} <a href="#/ingestion">${esc(s.title)}</a><br><span class="muted small">${esc(s.error || "")}</span></p>`),
+          ...(peopleRuns()[0]?.status === "failed" ? [`<p style="margin:4px 0">${badge("failed")} <a href="#/people/runs">people_dataset run failed</a><br><span class="muted small">${esc(peopleRuns()[0].error || "")}</span></p>`] : []),
+          ...(D.people?.detector ? [`<p style="margin:4px 0">${badge("warn", "people")} <a href="#/people/anomalies">${fmtInt(D.people.detector.dummy.likely)} likely dummy rows, ${fmtInt(D.people.detector.duplicates.likely)} likely duplicate pairs, ${fmtInt(D.people.detector.unnamed?.people || 0)} people without a name</a></p>`] : []),
+        ].join("") || `<p class="muted">Every source is registered and valid.</p>`}</div>
       </div>`;
   }
 
@@ -321,8 +401,13 @@
           ${sc === "gold" ? extra.map(([n]) => node("gold", n, table === n)).join("") : ""}
           ${!regs.length ? `<li class="muted small node">empty</li>` : ""}
         </ul></li>`).join("")}
-      </ul></li></ul></div>`;
+      </ul></li>
+      ${peopleTables().length ? `<li><span class="node">${icon("catalog")} <b>people</b></span><ul>
+        ${["gold", "silver", "bronze"].map((ly) => { const ts = peopleTables().filter((t) => t.layer === ly); return ts.length ? `<li><span class="node layer-${ly}">${icon("schema")} ${ly}</span><ul>
+          ${ts.map((t) => `<li data-name="${esc(t.name)}"><a href="#/catalog/${esc(t.name)}/overview/people" class="${schema === "people" && table === t.name ? "active" : ""}">${icon(ly === "gold" ? "table" : ly === "silver" ? "view" : "schema")} ${esc(t.name)}</a></li>`).join("")}</ul></li>` : ""; }).join("")}
+      </ul></li>` : ""}</ul></div>`;
     let main;
+    if (schema === "people") return `<div class="explorer">${tree}<div class="explorer-main">${peopleCatalogTable(table, tab)}</div></div>`;
     const s = table && sourceByTable(table);
     if (!table) {
       const L = lake();
@@ -335,6 +420,7 @@
           <tr><td>${icon("view")} <a href="#/catalog/${esc(tableName(x))}/overview/silver">sheets.silver.${esc(tableName(x))}</a></td><td>${layerBadge("silver")}</td><td class="num">${fmtInt(l.silver?.versions_total)}</td><td class="muted">${fmtInt(l.silver?.current)} current · ${fmtInt(l.silver?.dq?.fail)} failing</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>
           <tr><td>${icon("table")} <a href="#/catalog/${esc(tableName(x))}/overview/gold">sheets.gold.${esc(tableName(x))}</a></td><td>${layerBadge("gold")}</td><td class="num">${fmtInt(l.gold ?? x.rows)}</td><td class="muted">published as aggregates</td><td class="muted nowrap">${esc(ago(x.ingested_at))}</td></tr>`; }).join("") || `<tr><td colspan="5" class="empty">No tables yet. Register a sheet under Data Ingestion.</td></tr>`}
         ${extra.map(([n, d]) => `<tr><td>${icon("table")} <a href="#/catalog/${n}/overview/gold">sheets.gold.${n}</a></td><td>${layerBadge("gold")}</td><td class="num">${fmtInt(n === "consolidated" ? L.consolidated_rows : L.dq_issue_rows)}</td><td class="muted">${esc(d)}</td><td></td></tr>`).join("")}
+        ${peopleTables().map((t) => `<tr><td>${icon("people")} <a href="#/catalog/${esc(t.name)}/overview/people">people.${esc(t.name)}</a></td><td>${layerBadge(t.layer)}</td><td class="num">${fmtInt(t.rows)}</td><td class="muted">${esc(t.description)}</td><td class="muted nowrap">${esc(ago(D.people.generated_at))}</td></tr>`).join("")}
         </tbody></table></div>`;
     } else if (table === "consolidated" || table === "dq_issues") {
       const L = lake();
@@ -407,6 +493,47 @@
 
   const layerBadge = (sc) => `<span class="layer-pill layer-${sc}">${sc}</span>`;
 
+  // A people.* table in the catalog: columns with type, description, classification and where they appear.
+  function peopleCatalogTable(table, tab = "overview") {
+    const t = peopleTable(table);
+    if (!t) return `<div class="empty">Table <code>people.${esc(table || "")}</code> not found.</div>`;
+    const base = `#/catalog/${esc(t.name)}`;
+    const tabs = [["overview", "Columns"], ["details", "Details"], ["lineage", "Lineage"], ["permissions", "Permissions"]];
+    const clsTag = (c) => `<span class="tag ${c === "personal" ? "tag-personal" : c === "categorical" ? "tag-categorical" : c === "free_text" ? "tag-free_text" : c === "metadata" ? "tag-metadata" : ""}">${esc(c.replace("_", " "))}</span>`;
+    let body = "";
+    if (tab === "details") {
+      body = `<div class="grid grid-2"><div class="card"><h3>About this table</h3><dl class="kv">
+        <dt>Full name</dt><dd class="mono">people.${esc(t.name)}</dd><dt>Layer</dt><dd>${layerBadge(t.layer)}</dd><dt>Description</dt><dd>${esc(t.description)}</dd>
+        <dt>Rows</dt><dd>${fmtInt(t.rows)}</dd><dt>Columns</dt><dd>${t.columns.length}</dd><dt>Built</dt><dd>${esc(when(D.people.generated_at))} by the people_dataset job</dd></dl></div>
+        <div class="card"><h3>Where it lives</h3><dl class="kv"><dt>Lakehouse</dt><dd class="mono">people/${esc(t.name)}.parquet</dd>
+        <dt>Storage</dt><dd>${D.people.outputs?.storage === "drive" ? "Shared Drive" : "this run only (set storage.shared_drive_folder_id)"}</dd>
+        <dt>PEOPLE sheet</dt><dd>${D.people.outputs?.sheet?.url ? `<a href="${esc(D.people.outputs.sheet.url)}" target="_blank" rel="noopener">open</a>` : "not written yet"}</dd>
+        <dt>Job</dt><dd><a href="#/people/runs">people_dataset</a> · <a href="${esc(peopleWorkflowUrl())}" target="_blank" rel="noopener">people.yml</a></dd></dl></div></div>`;
+    } else if (tab === "lineage") {
+      body = `<div class="callout">The full step-by-step lineage, from each sheet tab to every page, with this run's counts, is in <a href="#/people/lineage">People → Lineage</a>.</div>
+        <div class="dag">${[["sheet", "Google Sheets", `${D.people.kpis.sources_read} of ${D.people.kpis.sources_configured} sources`], ["schema", "people.records", `${fmtInt(D.people.kpis.records)} rows`],
+          ["view", "people.people", `${fmtInt(D.people.kpis.people)} people`], ["table", `people.${t.name}`, `${fmtInt(t.rows)} rows`], ["dashboard", "People pages + Tree", "on this site"], ["sheet", "PEOPLE sheet", "Shared Drive"]]
+          .map(([i, k, d], n) => `${n ? '<div class="dag-edge"></div>' : ""}<div class="dag-node"><div class="k">${icon(i)} <span style="overflow:hidden;text-overflow:ellipsis">${esc(k)}</span></div><div class="d">${esc(d)}</div></div>`).join("")}</div>`;
+    } else if (tab === "permissions") {
+      body = `<div class="table-wrap"><table><thead><tr><th>Principal</th><th>Privilege</th><th>Scope</th></tr></thead><tbody>
+        <tr><td>Pipeline service account</td><td>READ</td><td>The people source sheets (Viewer)</td></tr>
+        <tr><td>Pipeline service account</td><td>WRITE</td><td>Shared Drive: lakehouse/people/, outputs/PEOPLE</td></tr>
+        <tr><td>Shared Drive members</td><td>SELECT (all rows)</td><td>PEOPLE sheet and SQL preview sheets</td></tr>
+        <tr><td>Repository writers</td><td>RUN</td><td>people_dataset job and SQL queries</td></tr>
+        <tr><td>Site PIN holders</td><td>SELECT</td><td>${t.columns.some((c) => c.shown.startsWith("tree")) ? "Columns marked “tree” by name; others as counts" : "Counts only"}</td></tr>
+        <tr><td>Public internet</td><td>None</td><td>Encrypted files only</td></tr></tbody></table></div>`;
+    } else {
+      body = `<div class="table-wrap"><table><thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Tag</th><th>Shown on this site</th></tr></thead><tbody>
+        ${t.columns.map((c) => `<tr><td class="mono">${esc(c.name)}</td><td class="mono muted">${esc(c.type)}</td><td>${esc(c.description || "–")}</td><td>${clsTag(c.class)}</td>
+          <td class="small ${c.shown.startsWith("lakehouse") ? "muted" : ""}">${esc(c.shown)}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    return head(`people.${t.name}`, esc(t.description),
+      `<a class="btn" href="${sqlLink(`SELECT * FROM people.${t.name} LIMIT 200`)}">${icon("play", 12)} Query</a> <a class="btn" href="#/people/lineage">Lineage</a>`,
+      [["people", "#/catalog"], [t.layer, "#/catalog"], [t.name, null]]) +
+      `<p style="margin:-8px 0 12px" class="muted small">${layerBadge(t.layer)} ${fmtInt(t.rows)} rows · ${t.columns.length} columns · refreshed ${esc(ago(D.people.generated_at))} by the people_dataset job</p>
+      <nav class="tabs">${tabs.map(([k, l]) => `<a href="${base}/${k}/people" class="${tab === k ? "active" : ""}">${l}</a>`).join("")}</nav>` + body;
+  }
+
   function layerPanel(table, l) {
     const b = l.bronze || {}, sv = l.silver || {};
     const stat = (label, v, sub = "") => `<div class="card stat"><div class="label">${label}</div><div class="value">${fmtInt(v)}</div>${sub ? `<div class="muted small">${sub}</div>` : ""}</div>`;
@@ -444,6 +571,12 @@
           <a class="btn btn-sm" href="${sqlLink(`SELECT column_name, rule, severity, count(*) AS rows FROM gold.dq_issues WHERE source_table = '${tableName(s)}' GROUP BY ALL ORDER BY rows DESC`)}">${icon("play", 10)} Query issues</a></div></div>
           ${qualityTable(s)}</div>`;
       }).join("") +
+      (D.people?.anomalies ? `<div class="card" style="margin-bottom:16px"><div class="page-head" style="margin-bottom:8px"><div><h2>People dataset</h2>
+          <p class="muted">${fmtInt(D.people.kpis.records)} source rows · ${badge("fail", `${fmtInt(D.people.kpis.excluded)} excluded`)} ${D.people.detector ? `${badge("warn", `${fmtInt(D.people.detector.dummy.likely)} likely dummy`)} ${badge("warn", `${fmtInt(D.people.detector.duplicates.likely)} likely duplicate pairs`)}` : ""}</p></div>
+          <div><a class="btn btn-sm" href="#/people/anomalies">Open anomaly detection</a> <a class="btn btn-sm" href="${sqlLink("SELECT rule, source, count(*) AS rows FROM people.anomalies GROUP BY ALL ORDER BY rows DESC")}">${icon("play", 10)} Query anomalies</a></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Rule</th><th>Severity</th><th>Action</th><th class="num">Rows</th></tr></thead><tbody>
+          ${D.people.anomalies.map((a) => `<tr><td class="mono">${esc(a.rule)}<div class="muted small" style="font-family:var(--font)">${esc(a.description)}</div></td><td>${badge(a.severity === "error" ? "fail" : a.severity === "warn" ? "warn" : "ok", a.severity)}</td><td>${esc(a.action)}</td><td class="num">${fmtInt(a.count)}</td></tr>`).join("")}
+        </tbody></table></div></div>` : "") +
       `<div class="card"><h3>Add a rule to a sheet</h3><p class="muted">Add a tab named <code>${esc(lake().quality_rules_tab || "QUALITY_RULES")}</code> with these columns. Rows that can't be used show as warnings on Data Ingestion.</p>
         <div class="table-wrap"><table><thead><tr><th>column_name</th><th>rule</th><th>parameter</th><th>severity</th><th>description</th></tr></thead><tbody>
         <tr><td class="mono">prior_research_experience</td><td class="mono">allowed_values</td><td class="mono">Yes|No</td><td>error</td><td>Only Yes or No</td></tr>
@@ -460,6 +593,9 @@
     ["Rows that failed rules", `SELECT record_key, column_name, rule, severity, message, sheet_row\nFROM gold.dq_issues WHERE source_table = '${t}' AND severity = 'error'`],
     ["Snapshots in bronze", `SELECT _run_id, min(_ingested_at) AS read_at, count(*) AS rows\nFROM bronze.${t} GROUP BY 1 ORDER BY read_at DESC`],
     ["All sources", `SELECT source_table, dq_status, count(*) AS records\nFROM gold.consolidated GROUP BY ALL ORDER BY ALL`],
+    ["People by role and province", `SELECT primary_role, residence_province, count(*) AS people\nFROM people.gold_people GROUP BY ALL ORDER BY people DESC`],
+    ["Management team", `SELECT full_name, mgmt_position, mgmt_division, mgmt_level, mgmt_history\nFROM people.gold_people WHERE is_management_member ORDER BY mgmt_level, mgmt_division`],
+    ["Likely duplicates", `SELECT round(probability * 100) AS pct, name_a, email_a, name_b, email_b, reasons\nFROM people.duplicate_candidates WHERE probability >= 0.8 ORDER BY probability DESC`],
   ];
 
   function sql() {
@@ -475,7 +611,9 @@
     const schema = registered().map((s) => `<details><summary>${icon("table")} ${esc(tableName(s))}</summary>
         ${["bronze", "silver", "gold"].map((sc) => `<div class="schema-item" data-insert="${sc}.${esc(tableName(s))}">${layerBadge(sc)} ${sc}.${esc(tableName(s))}</div>`).join("")}
         <div class="schema-cols">${s.columns.map((c) => `<span class="schema-item" data-insert="${esc(c.name)}">${esc(c.name)}</span>`).join("")}</div></details>`).join("")
-      + (lake().tables?.length ? `<details open><summary>${icon("table")} gold (shared)</summary><div class="schema-item" data-insert="gold.consolidated">${layerBadge("gold")} gold.consolidated</div><div class="schema-item" data-insert="gold.dq_issues">${layerBadge("gold")} gold.dq_issues</div></details>` : "");
+      + (lake().tables?.length ? `<details open><summary>${icon("table")} gold (shared)</summary><div class="schema-item" data-insert="gold.consolidated">${layerBadge("gold")} gold.consolidated</div><div class="schema-item" data-insert="gold.dq_issues">${layerBadge("gold")} gold.dq_issues</div></details>` : "")
+      + (peopleTables().length ? `<details open><summary>${icon("people")} people</summary>${peopleTables().map((pt) => `<details class="schema-sub"><summary class="schema-item" data-insert="people.${esc(pt.name)}">people.${esc(pt.name)} <span class="muted small">${fmtInt(pt.rows)}</span></summary>
+          <div class="schema-cols">${pt.columns.map((c) => `<span class="schema-item" data-insert="${esc(c.name)}" title="${esc(c.type)} · ${esc(c.description)}">${esc(c.name)}</span>`).join("")}</div></details>`).join("")}</details>` : "");
     el.innerHTML = `<div class="sql-layout">
       <aside class="sql-schema card"><h3>Schema</h3>${schema || `<p class="muted">No tables yet.</p>`}<p class="muted small">Click a name to insert it.</p></aside>
       <section class="sql-main">
@@ -628,18 +766,21 @@
       `<nav class="tabs">${tabs.map(([k, l]) => `<a href="#/jobs/${JOB_ID}/${k}" class="${tab === k ? "active" : ""}">${l}</a>`).join("")}</nav>` + body;
   }
 
-  function runsTable(rs) {
+  function runsTable(rs, withJob = false) {
     if (!rs.length) return `<div class="empty">No runs yet.</div>`;
-    return `<div class="table-wrap"><table><thead><tr><th>Start time</th><th>Run</th><th>Status</th><th>Trigger</th><th>Run as</th><th>Sources</th><th class="num">Duration</th></tr></thead><tbody>
-      ${rs.map((r) => `<tr><td class="nowrap"><a href="#/runs/${esc(r.run_id)}">${esc(when(r.started_at))}</a></td><td class="mono">${esc(r.run_number ? `#${r.run_number}` : r.run_id)}</td>
+    const srcs = (r) => r.sources ? `${r.sources.registered} ok · ${r.sources.rejected} rejected · ${r.sources.unreachable} unreachable`
+      : r.summary ? `${fmtInt(r.summary.sources_read)} read · ${fmtInt(r.summary.people)} people` : "–";
+    return `<div class="table-wrap"><table><thead><tr><th>Start time</th>${withJob ? "<th>Job</th>" : ""}<th>Run</th><th>Status</th><th>Trigger</th><th>Run as</th><th>Sources</th><th class="num">Duration</th></tr></thead><tbody>
+      ${rs.map((r) => `<tr><td class="nowrap"><a href="${runHref(r)}">${esc(when(r.started_at))}</a></td>${withJob ? `<td class="mono small">${esc(r.job || "sheets_to_duckdb")}</td>` : ""}<td class="mono">${esc(r.run_number ? `#${r.run_number}` : r.run_id)}</td>
         <td>${badge(r.status)}</td><td>${esc(triggerLabel(r.trigger))}${r.only_source ? `<div class="muted small">one source</div>` : ""}</td><td>${esc(r.actor)}</td>
-        <td class="nowrap">${r.sources ? `${r.sources.registered} ok · ${r.sources.rejected} rejected · ${r.sources.unreachable} unreachable` : "–"}</td><td class="num">${dur(r.duration_s)}</td></tr>`).join("")}
+        <td class="nowrap">${srcs(r)}</td><td class="num">${dur(r.duration_s)}</td></tr>`).join("")}
       </tbody></table></div>`;
   }
 
   function runsPage(id) {
-    if (!id) return head("Job Runs", "Every run of the pipeline, newest first.", runBtn()) + runsTable(runs());
+    if (!id) return head("Job Runs", "Every run of both GitHub Actions jobs, newest first: <b>sheets_to_duckdb</b> (registered sheets) and <b>people_dataset</b> (people gold, tree, anomalies).", runBtn()) + runsTable(allRuns(), true);
     const r = runs().find((x) => String(x.run_id) === id);
+    if (!r && D.people && peopleRuns().some((x) => String(x.run_id) === id)) return head("Job Runs", "", "", [["Job Runs", "#/runs"], ["people_dataset", null]]) + peopleRunsView(D.people, id);
     if (!r) return notFound();
     return head(`Run ${r.run_number ? `#${r.run_number}` : r.run_id}`, `${badge(r.status)} · ${esc(triggerLabel(r.trigger))} by ${esc(r.actor)} · ${esc(when(r.started_at))} · ${dur(r.duration_s)}`,
       `${r.url ? `<a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">${icon("ext")} Logs on GitHub</a> ` : ""}${runBtn(r.only_source || "")}`,
@@ -673,6 +814,13 @@
         <td>${s.status === "registered" ? `<a href="#/catalog/${esc(tableName(s))}">${esc(s.fqn)}</a>${s.warnings.length ? `<div class="muted small">${s.warnings.map(esc).join("<br>")}</div>` : ""}` :
           `<ul class="list-plain small">${s.errors.slice(0, 6).map((e) => `<li>${esc(e)}</li>`).join("")}${s.errors.length > 6 ? `<li>and ${s.errors.length - 6} more</li>` : ""}</ul>`}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No sources found.</td></tr>`}
       </tbody></table></div>
+      ${D.people?.sources ? `<h2 class="section-title">People dataset sources <span class="muted small">· read by the people_dataset job · ${esc(ago(D.people.generated_at))}</span></h2>
+      <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Source tab</th><th>Label</th><th>Status</th><th class="num">Rows</th><th class="num">Excluded</th><th>Details</th></tr></thead><tbody>
+        ${[...D.people.sources, ...(D.people.gold?.mentorship?.sources || []).map((s) => ({ ...s, label: `${s.program}_PAIRING`, status: s.status, rows: s.rows, excluded: null, error: s.error }))].map((s) => `<tr>
+          <td>${icon("sheet")} ${s.spreadsheet_id ? `<a href="https://docs.google.com/spreadsheets/d/${esc(s.spreadsheet_id)}" target="_blank" rel="noopener">${esc(s.title)}</a>` : esc(s.title)}</td>
+          <td class="mono small">${esc(s.label)}</td><td>${badge(s.status === "read" ? "registered" : "unreachable", s.status)}</td><td class="num">${fmtInt(s.rows)}</td><td class="num">${s.excluded == null ? "–" : fmtInt(s.excluded)}</td>
+          <td class="small">${s.status === "read" ? `<a href="#/people/sources">columns used</a>` : esc(s.error || "")}</td></tr>`).join("")}
+      </tbody></table></div>` : ""}
       <div class="grid grid-2">
         <div class="card"><h3>Add data: the source format</h3><p class="muted">Put a Google Sheet in the live folder (or add its ID to <code>config/platform.yml</code>). It is registered on the next run when it has these tabs:</p>
           <dl class="kv"><dt><code>${esc(c.data_tab)}</code></dt><dd>Row 1 is the header (form questions), then one row per record.</dd>
@@ -1059,7 +1207,7 @@
         `<div class="empty"><h2>Not built yet</h2><p class="muted">Run <b>People dataset</b> in GitHub Actions once. It needs the service account to have access to the sources in <code>config/people.yml</code>.</p></div>`;
     }
     const tabs = [["gold", "People gold"], ["tree", "Tree"], ["lineage", "Lineage"], ["overview", "Dedup overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
-    const body = { gold: peopleGold, tree: peopleTree, lineage: peopleLineage, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
+    const body = { gold: peopleGold, tree: peopleTree, lineage: peopleLineage, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRunsPage }[tab];
     if (!body) return notFound();
     const sheet = P.outputs?.sheet;
     return head("People dataset", `One row per person across mentorship (Master and PhD), events and management. Built ${esc(ago(P.generated_at))}.`,
@@ -2191,7 +2339,8 @@
         <p class="muted small" style="margin:8px 0 0">Sources and their column names are in <code>config/people.yml</code>. A sheet the service account can't open shows as <b>unreachable</b>.</p></div>`;
   }
 
-  function peopleRuns(P, runId) {
+  function peopleRunsView(P, runId) { return peopleRunsPage(P, runId); }
+  function peopleRunsPage(P, runId) {
     const rs = P.runs || [];
     if (runId) {
       const r = rs.find((x) => String(x.run_id) === runId);
@@ -2210,11 +2359,32 @@
       </tbody></table></div>` : `<div class="empty">No runs yet.</div>`}`;
   }
 
+  function peopleGovernance() {
+    const C = D.people?.catalog;
+    if (!C) return "";
+    const G = C.governance, cls = ["personal", "identifier", "free_text", "categorical", "metadata"];
+    const total = cls.reduce((a, k) => a + (C.classes[k] || 0), 0) || 1;
+    const colour = { personal: "--danger", identifier: "--c6", free_text: "--warning", categorical: "--primary", metadata: "--success" };
+    const byShown = {};
+    C.tables.forEach((t) => t.columns.filter((c) => c.class === "personal").forEach((c) => (byShown[c.shown] ||= []).push(`${t.name}.${c.name}`)));
+    return `<div class="card" style="margin-bottom:16px"><div class="page-head" style="margin-bottom:8px"><div><h2>People dataset</h2>
+        <p class="muted">${C.tables.length} tables in <code>people.*</code> · built by the people_dataset job ${esc(ago(D.people.generated_at))} · <a href="#/people/lineage">lineage</a></p></div></div>
+      <div style="display:flex;height:14px;border-radius:3px;overflow:hidden;margin-bottom:6px">${cls.map((k) => C.classes[k] ? `<span title="${k}: ${C.classes[k]}" style="width:${(100 * C.classes[k]) / total}%;background:var(${colour[k]})"></span>` : "").join("")}</div>
+      <p class="small" style="margin:0 0 12px">${cls.map((k) => `<span class="tag ${k === "personal" ? "tag-personal" : k === "categorical" ? "tag-categorical" : ""}">${esc(k.replace("_", " "))}</span> ${C.classes[k] || 0}`).join(" &nbsp; ")}</p>
+      <div class="callout ${G.publish_directory ? "warn" : ""}"><b>Names on this site: ${G.publish_directory ? "yes" : "no"}.</b> ${G.publish_directory
+        ? "<code>publish_directory: true</code> in config/people.yml (decided 1 Nov 2026): the People tree shows names, roles, places, management positions and the links people gave, sealed with the site PIN. Set it to false to remove the file on the next run."
+        : "Only counts are published; names stay in the lakehouse and the PEOPLE sheet."} Never published: ${G.never.map(esc).join(", ")}.</div>
+      <div class="table-wrap" style="margin-bottom:12px"><table><thead><tr><th>Site file</th><th>Holds</th><th>Personal data</th></tr></thead><tbody>
+        ${G.files.map((f) => `<tr><td class="mono">${esc(f.file)}</td><td>${esc(f.holds)}</td><td>${esc(f.personal_data)}</td></tr>`).join("")}</tbody></table></div>
+      <h3>Personal columns and where they appear</h3>
+      ${Object.entries(byShown).map(([where, cols]) => `<p style="margin:6px 0"><b>${esc(where)}</b>: ${cols.map((c) => `<code>${esc(c)}</code>`).join(", ")}</p>`).join("")}</div>`;
+  }
+
   function governance() {
     const g = D.governance;
     const classes = ["personal", "sensitive", "free_text", "categorical", "metadata"];
     return head("Governance", "What is collected, what is withheld, and the rules that decide it.") + `
-      <div class="callout"><b>Policy.</b> Rows never leave the pipeline run. Columns tagged <b>personal</b> or <b>sensitive</b> are dropped before anything is counted; free text is only measured for completeness; categories with fewer than <b>${g.min_group_size}</b> people are folded into one group, and that group is hidden too when it is itself under ${g.min_group_size}. Published files are encrypted with the site PIN (AES-256-GCM, PBKDF2 key).</div>
+      <div class="callout"><b>Policy.</b> Rows never leave the pipeline run${D.people?.catalog?.governance?.publish_directory ? `, except the people directory behind the Tree (names, roles, places and positions; see <a href="#/governance">People dataset</a> below)` : ""}. Columns tagged <b>personal</b> or <b>sensitive</b> are dropped before anything is counted; free text is only measured for completeness; categories with fewer than <b>${g.min_group_size}</b> people are folded into one group, and that group is hidden too when it is itself under ${g.min_group_size}. Published files are encrypted with the site PIN (AES-256-GCM, PBKDF2 key).</div>
       <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Tag</th><th>Meaning</th><th>Published as</th></tr></thead><tbody>
         ${classes.map((k) => `<tr><td>${tag(k)}</td><td>${esc(CLASS_INFO[k])}</td><td>${g.withheld_classes.includes(k) ? badge("fail", "Never") : k === "free_text" ? badge("warn", "Completeness only") : badge("ok", "Suppressed counts")}</td></tr>`).join("")}
       </tbody></table></div>
@@ -2226,6 +2396,7 @@
           <div class="grid grid-2"><div><h3>Withheld columns (${s.withheld.length})</h3><p>${s.withheld.map((c) => `<code>${esc(c)}</code>`).join(", ") || "None"}</p></div>
           <div><h3>Consent coverage</h3>${s.consent.map((c) => `<p style="margin:2px 0"><code>${esc(c.column)}</code> answered by ${pct(c.completeness)} ${badge(c.completeness >= 0.999 ? "ok" : "fail", c.completeness >= 0.999 ? "Complete" : "Gaps")}</p>`).join("") || `<p class="muted">No consent column found. Add one to the form.</p>`}</div></div></div>`;
       }).join("") || `<div class="empty">No registered sources.</div>`}
+      ${peopleGovernance()}
       <div class="card"><h3>Classification rules</h3><p class="muted small">From <code>config/platform.yml</code>, first match on <code>column_name</code> wins.</p>
         <div class="table-wrap"><table><thead><tr><th>Pattern</th><th>Tag</th></tr></thead><tbody>${g.rules.map((r) => `<tr><td class="mono">${esc(r.match)}</td><td>${tag(r.class)}</td></tr>`).join("")}</tbody></table></div></div>`;
   }
@@ -2836,6 +3007,12 @@ ${passageBlock(passages) || "(no matching passages)"}`;
       ...Object.entries(D.dashboard.sources || {}).map(([id, d]) => ({ kind: "Dashboard", label: d.title, href: `#/dashboards/${id}` })),
       { kind: "Job", label: JOB_ID, href: `#/jobs/${JOB_ID}` },
       { kind: "Job", label: PEOPLE_JOB, href: "#/people/runs" },
+      ...peopleTables().flatMap((t) => [
+        { kind: "Table", label: `people.${t.name}`, extra: t.description, href: `#/catalog/${t.name}/overview/people` },
+        ...t.columns.map((c) => ({ kind: "Column", label: `people.${t.name}.${c.name}`, extra: c.description, href: `#/catalog/${t.name}/overview/people` })),
+      ]),
+      ...[["Tree", "tree"], ["Lineage", "lineage"], ["Anomalies & review", "anomalies"], ["People gold", "gold"]].map(([l, k]) => ({ kind: "Page", label: `People · ${l}`, href: `#/people/${k}` })),
+      ...((D.people_directory?.people || []).map((r, i) => ({ kind: "Person", label: r[0] ? niceName(r[0]) : `No name · ${r[D.people_directory.fields.indexOf("email_hint")] || ""}`, href: `#/people/tree?person=${i}` }))),
       { kind: "Page", label: "People dataset", extra: "mentee mentor event management dedup anomalies", href: "#/people" },
       { kind: "Page", label: "Governance", href: "#/governance" },
       { kind: "Page", label: "Job Runs", href: "#/runs" },

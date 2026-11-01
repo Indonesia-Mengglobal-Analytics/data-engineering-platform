@@ -30,6 +30,7 @@ import lakehouse  # noqa: E402
 import people as P  # noqa: E402
 import people_gold as G  # noqa: E402
 import people_anomaly as A  # noqa: E402
+import people_catalog  # noqa: E402
 import people_lineage  # noqa: E402
 from exports import GoogleSheets, LocalSheets, table  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
@@ -414,6 +415,7 @@ def main() -> int:
             return {"bytes": sizes, "sheet": link, "kind": storage.kind}
         stored = step("store", store)
         payload["outputs"] = {"sheet": stored["sheet"], "storage": stored["kind"]}
+        payload["catalog"] = people_catalog.build(con, bool(config.get("publish_directory")))
         payload["lineage"] = people_lineage.build(inventory, pair_inventory, records, result, built, links, config, payload["outputs"])
         run["status"] = "succeeded" if all(s["status"] == "read" for s in inventory) else "partial"
         run["summary"] = {k: payload["kpis"][k] for k in ("records", "excluded", "people", "merged_records", "review_items", "sources_read")}

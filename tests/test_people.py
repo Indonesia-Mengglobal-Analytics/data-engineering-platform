@@ -400,3 +400,33 @@ def test_management_positions_and_history(gold_run):
     assert "2023: Head of Data, Data" in row[3]
     applied = dict(con.execute("SELECT full_name, applied_position FROM gold_people WHERE applied_position IS NOT NULL").fetchall())
     assert applied["Intan Kusuma"] == "Mentorship Coordinator"
+
+
+def test_people_catalog_matches_the_lakehouse(gold_run):
+    import duckdb
+
+    _, doc, lake = gold_run
+    cat = doc["catalog"]
+    names = {t["name"] for t in cat["tables"]}
+    assert {"gold_people", "mentorships", "duplicate_candidates", "records", "graph_edges"} <= names
+    con = duckdb.connect()
+    for t in cat["tables"]:
+        df = con.execute(f"SELECT * FROM read_parquet('{lake}/lakehouse/people/{t['name']}.parquet') LIMIT 0").description
+        assert [c["name"] for c in t["columns"]] == [d[0] for d in df], t["name"]
+        assert con.execute(f"SELECT count(*) FROM read_parquet('{lake}/lakehouse/people/{t['name']}.parquet')").fetchone()[0] == t["rows"]
+    gold = next(t for t in cat["tables"] if t["name"] == "gold_people")
+    col = {c["name"]: c for c in gold["columns"]}
+    assert col["phone"]["class"] == "personal" and col["phone"]["shown"].startswith("lakehouse")
+    assert col["full_name"]["shown"].startswith("tree") and col["person_id"]["class"] == "identifier"
+    assert cat["governance"]["publish_directory"] is True
+
+
+def test_both_workflows_carry_each_others_files():
+    import yaml
+
+    for wf, needs in (("pipeline.yml", ["people", "people_directory"]), ("people.yml", ["catalog", "jobs", "governance", "dashboard", "knowledge"])):
+        text = (ROOT / ".github" / "workflows" / wf).read_text()
+        yaml.safe_load(text)
+        for f in needs:
+            assert f in text, (wf, f)
+        assert "group: pages" in text
