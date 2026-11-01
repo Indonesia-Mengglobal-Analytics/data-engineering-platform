@@ -1430,7 +1430,7 @@
       if (!TREE.q.trim()) { box.innerHTML = ""; return; }
       const hits = treeFilter(dir).slice(0, 6);
       box.innerHTML = hits.length ? hits.map((p) => `<button type="button" data-hit="${p.i}"><span class="ini" style="background:var(${roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
-        <span><b>${esc(p.name)}</b><small>${esc([p.roles.map(roleName).join(", "), p.city || p.province || p.country].filter(Boolean).join(" · "))}</small></span></button>`).join("")
+        <span><b>${esc(p.name)}</b><small>${esc([p.roles.slice(0, 2).map(roleName).join(", ") + (p.roles.length > 2 ? ` +${p.roles.length - 2}` : ""), p.city || p.province || p.country].filter(Boolean).join(" · "))}</small></span></button>`).join("")
         : `<p class="muted small">No one matches.</p>`;
       $$("[data-hit]", box).forEach((b) => b.addEventListener("click", () => reveal(+b.dataset.hit)));
     };
@@ -1460,13 +1460,28 @@
       const limit = filtered && count <= 60 ? 99 : filtered && count <= 400 ? 3 : 1;
       const walk = (n, depth) => { if (depth < limit && n.children.size) { TREE.expanded.add(n.key); n.children.forEach((c) => c.kind !== "person" && walk(c, depth + 1)); } };
       walk(root, 0);
+      // Then open every branch that has only one child group, until the tree splits.
+      const chain = (n) => {
+        if (!TREE.expanded.has(n.key)) return;
+        const groups = [...n.children.values()].filter((c) => c.kind !== "person");
+        groups.forEach((c) => { if (groups.length === 1 && n.children.size === 1) TREE.expanded.add(c.key); chain(c); });
+      };
+      chain(root);
     };
 
     const render = () => {
       const people = treeFilter(dir);
       const root = buildTree(dir, people);
+      const wasAuto = TREE.auto;
       autoExpand(root, people.length);
       const lay = layout(root);
+      if (wasAuto) {
+        // Show the deepest opened column, so the first split is on screen.
+        const sc = $("#tree-scroll");
+        const open = lay.nodes.filter((it) => it.n.kind !== "person" && it.kids.length);
+        const deepest = open.length ? Math.max(...open.map((it) => it.x)) : 0;
+        setTimeout(() => sc.scrollTo({ left: Math.max(0, deepest + COL + NODE_W + 40 - sc.clientWidth), behavior: reduce ? "auto" : "smooth" }), reduce ? 0 : 200);
+      }
       layoutNow = lay;
       drawToolbar(people.length, dir.people.length);
       svg.setAttribute("width", lay.width); svg.setAttribute("height", lay.height);
