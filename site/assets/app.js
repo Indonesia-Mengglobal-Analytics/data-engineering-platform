@@ -1710,7 +1710,7 @@
       const p = dir.people[pi], box = $("#tree-detail");
       const link = (i, extra = "") => `<button type="button" class="linkish" data-person="${i}">${esc(dir.people[i].name)}</button>${extra}`;
       const mentees = dir.mentees.get(pi) || [], mentors = dir.mentors.get(pi) || [], evs = dir.eventsOf.get(pi) || [];
-      box.innerHTML = `<header><span class="ini lg" style="background:var(${roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
+      box.innerHTML = `<header><span class="ini lg" style="background:var(${p.unnamed ? "--c9" : roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
           <div><h3>${esc(p.name)}</h3><div class="muted small">${esc([p.city, p.province, p.region].filter(Boolean).join(", ") || (p.country && p.country !== "Indonesia" ? `Lives in ${p.country}` : "Location not stated"))}</div></div>
           <button type="button" class="icon-btn" id="td-close" aria-label="Close">✕</button></header>
         ${p.unnamed ? `<div class="td-dups"><div class="tf-h">No name in any source</div><p class="small">${dir.unnamedWhy.get(pi)?.cause === "left_blank" ? "The name was left blank in every form this person filled in." : "Every sheet this person appears in has no name column."}</p>
@@ -1719,8 +1719,8 @@
         <div class="td-roles">${p.roles.map((r) => `<span class="rchip" style="--rc:var(${roleColor(r)})">${esc(roleName(r))}</span>`).join("")}</div>
         <div class="td-links">${p.li ? `<a class="lbtn li" href="${esc(p.li)}" target="_blank" rel="noopener noreferrer"><b>in</b> LinkedIn</a>` : ""}
           ${p.prof ? `<a class="lbtn" href="${esc(p.prof)}" target="_blank" rel="noopener noreferrer">${icon("ext", 11)} Profile</a>` : ""}
-          ${!p.li ? `<a class="lbtn ghost" href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([p.name, p.inst].filter(Boolean).join(" "))}" target="_blank" rel="noopener noreferrer" title="Opens a LinkedIn search. Check it is the right person before adding the link to the source sheet.">Search LinkedIn</a>` : ""}</div>
-        ${!p.li ? `<p class="muted small td-note">No LinkedIn given. The search is a suggestion only: confirm it is the same person, then add the link to the source sheet.</p>` : ""}
+          ${!p.li && !p.unnamed ? `<a class="lbtn ghost" href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([p.name, p.inst].filter(Boolean).join(" "))}" target="_blank" rel="noopener noreferrer" title="Opens a LinkedIn search. Check it is the right person before adding the link to the source sheet.">Search LinkedIn</a>` : ""}</div>
+        ${!p.li && !p.unnamed ? `<p class="muted small td-note">No LinkedIn given. The search is a suggestion only: confirm it is the same person, then add the link to the source sheet.</p>` : ""}
         <dl class="kv">
           <dt>Years with IM</dt><dd>${p.yrs ? `${p.yrs} year${p.yrs > 1 ? "s" : ""}` : "–"}${p.fy ? ` <span class="muted small">(${p.fy}${p.ly && p.ly !== p.fy ? `–${p.ly}` : ""})</span>` : ""}</dd>
           <dt>Born in</dt><dd>${esc([p.bcity, p.bprov].filter(Boolean).join(", ") || (p.origin && p.origin !== "Indonesia" ? p.origin : "–"))}</dd>
