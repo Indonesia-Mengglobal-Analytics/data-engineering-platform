@@ -109,6 +109,18 @@
     .sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
   const runHref = (r) => (r.job === "people_dataset" ? `#/people/runs/${encodeURIComponent(r.run_id)}` : `#/runs/${encodeURIComponent(r.run_id)}`);
   const peopleTables = () => D.people?.catalog?.tables || [];
+  // Every Google Sheet either job reads: the pipeline's registered/rejected sheets, the people source tabs, the pairing sheets.
+  function sheetSources() {
+    const pipeline = sources();
+    const ptabs = D.people?.sources || [];
+    const pairs = D.people?.gold?.mentorship?.sources || [];
+    const ids = new Set([...pipeline.map((s) => s.id), ...ptabs.map((s) => s.spreadsheet_id), ...pairs.map((s) => s.spreadsheet_id)].filter(Boolean));
+    const readable = new Set([...pipeline.filter((s) => s.status !== "unreachable").map((s) => s.id),
+      ...ptabs.filter((s) => s.status === "read").map((s) => s.spreadsheet_id), ...pairs.filter((s) => s.status === "read").map((s) => s.spreadsheet_id)].filter(Boolean));
+    return { spreadsheets: ids.size, readable: readable.size, pipeline: pipeline.length, registered: registered().length,
+      peopleTabs: ptabs.length, peopleRead: ptabs.filter((s) => s.status === "read").length,
+      pairing: pairs.length, tabs: pipeline.length + ptabs.length + pairs.length };
+  }
   const peopleTable = (t) => peopleTables().find((x) => x.name === t);
   const tableName = (s) => (s.fqn || "").split(".").pop();
   const sourceByTable = (t) => registered().find((s) => tableName(s) === t);
@@ -353,7 +365,8 @@
     return head("Welcome to Indonesia Mengglobal's data workspace", "Google Sheets → DuckDB on GitHub Actions → this site. No servers.", runBtn()) +
       `<div class="card flow-card" id="flow"></div>` + `
       <div class="grid grid-4" style="margin-bottom:16px">
-        <a class="card card-link stat" href="#/ingestion"><div class="label">Registered sources</div><div class="value">${counts.registered}</div><div class="muted small">${counts.rejected} rejected · ${counts.unreachable} unreachable</div></a>
+        ${(() => { const x = sheetSources(); return `<a class="card card-link stat" href="#/ingestion"><div class="label">Google Sheets sources</div><div class="value">${x.spreadsheets}</div>
+          <div class="muted small">${x.pipeline} pipeline (${counts.registered} registered${counts.rejected ? `, ${counts.rejected} rejected` : ""}) · ${x.peopleRead}/${x.peopleTabs} people tabs read · ${x.pairing} pairing</div></a>`; })()}
         <a class="card card-link stat" href="#/catalog"><div class="label">Records in catalog</div><div class="value">${fmtInt(rows)}</div><div class="muted small">${registered().length} table${registered().length === 1 ? "" : "s"} in sheets.gold</div></a>
         <a class="card card-link stat" href="#/runs"><div class="label">Last pipeline run</div><div class="value" style="font-size:20px">${last ? badge(last.status) : "–"}</div><div class="muted small">${last ? `${esc(ago(last.finished_at))} · ${esc(triggerLabel(last.trigger))}` : "No runs yet"}</div></a>
         <a class="card card-link stat" href="#/governance"><div class="label">Columns withheld (PII)</div><div class="value">${withheld}</div><div class="muted small">Groups under ${D.governance.min_group_size} suppressed</div></a>
@@ -807,7 +820,9 @@
 
   function ingestion() {
     const c = D.catalog.contract;
-    return head("Data Ingestion", "Sheets found in the live Drive folder and the config. Only sheets in the agreed format are registered.", runBtn()) + `
+    const x = sheetSources();
+    return head("Data Ingestion", `<b>${x.spreadsheets}</b> Google Sheets (${x.tabs} tabs) read with the service account by both jobs. The pipeline registers sheets in the agreed format from its Drive folder; the people job reads the tabs listed in <code>config/people.yml</code>.`, runBtn()) + `
+      <h2 class="section-title">Pipeline sheets <span class="muted small">· sheets_to_duckdb · ${x.pipeline} sheet${x.pipeline === 1 ? "" : "s"}, ${x.registered} registered</span></h2>
       <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Source</th><th>Status</th><th>Owner</th><th class="num">Rows</th><th>Checked</th><th>Details</th></tr></thead><tbody>
       ${sources().map((s) => `<tr><td>${icon("sheet")} ${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>` : esc(s.title)}<div class="muted small mono">${esc(s.id)}</div></td>
         <td>${badge(s.status)}</td><td>${esc(s.table?.owner_email || "–")}</td><td class="num">${fmtInt(s.rows)}</td><td class="nowrap muted">${esc(ago(s.checked_at))}</td>
@@ -2414,8 +2429,8 @@
     const charts = Object.values(D.dashboard.sources || {}).reduce((a, d) => a + d.charts.length, 0);
     return [
       { key: "sheets", icon: "sheet", title: "Google Sheets", tint: "--success",
-        stat: `${sources().length} source${sources().length === 1 ? "" : "s"}`,
-        desc: "Live form responses in the Drive folder. The pipeline reads them with a service account, every 6 hours or on demand.", href: "#/ingestion" },
+        stat: (() => { const x = sheetSources(); return `${x.spreadsheets} spreadsheets · ${x.tabs} tabs`; })(),
+        desc: (() => { const x = sheetSources(); return `Read with the service account by both jobs: ${x.pipeline} sheet${x.pipeline === 1 ? "" : "s"} in the pipeline's Drive folder (every 6 hours) and ${x.peopleTabs} people source tabs plus ${x.pairing} pairing sheets (daily). ${x.readable} of ${x.spreadsheets} spreadsheets could be read.`; })(), href: "#/ingestion" },
       { key: "validate", icon: "check", title: "Contract check", tint: "--primary",
         stat: `${regs.length} registered`,
         desc: "DATA, COLUMN_METADATA and TABLE_METADATA must agree. Sheets that don't are rejected with the reason.", href: "#/ingestion" },
