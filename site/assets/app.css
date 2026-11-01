@@ -701,3 +701,14 @@ tr.row-archived td { opacity: .65; }
 .env-pill { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .06em; border: 1px solid; }
 .env-pill.env-dev { color: #b45309; background: #fef3c7; border-color: #f59e0b; }
 .env-pill.env-prd { color: var(--success); background: var(--success-soft); border-color: var(--success); }
+
+.tt-tabs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; border-bottom: 1px solid var(--border); margin: -4px 0 10px; padding-bottom: 6px; }
+.tt-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; background: none; border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 13px; color: var(--text-muted); cursor: pointer; }
+.tt-tab:hover { color: var(--text); background: var(--bg-subtle); }
+.tt-tab.on { color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--bg)); border-color: color-mix(in srgb, var(--primary) 35%, transparent); font-weight: 600; }
+.tt-n { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--bg-subtle); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.tt-lvl { width: 16px; height: 16px; border-radius: 4px; display: inline-grid; place-items: center; font-size: 10px; font-weight: 700; background: var(--bg-subtle); color: var(--text-muted); }
+.tt-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.tt-export { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.tt-msg:empty { display: none; }
+.tt-msg { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; background: color-mix(in srgb, var(--success) 10%, var(--bg)); border: 1px solid color-mix(in srgb, var(--success) 30%, transparent); }

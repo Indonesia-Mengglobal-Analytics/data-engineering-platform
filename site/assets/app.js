@@ -1356,7 +1356,7 @@
     view: "role", q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0,
     mentored: false, yearFrom: "", yearTo: "", expanded: new Set(["root"]), caps: new Map(), selected: null,
     prev: new Map(), els: new Map(), auto: true, origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "",
-    field: "", univ: "", tsort: { key: "count", dir: -1 }, tpage: 1,
+    field: "", univ: "", tsorts: {}, ttab: "people", tpage: 1,
   };
   const NODE_W = 216, NODE_H = 40, COL = NODE_W + 64, ROW = 50, PAD = 24, CAP = 40;
   // Caption shown above a group label, so the label itself can be just the value ("Content Writer", not "Applied: Content W…").
@@ -1940,73 +1940,111 @@
       anim = { raf: requestAnimationFrame(frame) };
     };
 
-    // Table of the last level shown: the deepest open level. Groups list their path and people; people list their details
-    // (all people under the open branches, not only the 40 drawn per branch).
+    // Table under the tree, in tabs. "People affected" (default) is people gold for everyone in the current view, filters
+    // and search; then one tab per level shown (Program, Role, Field of study, University…). Every tab opens in a spreadsheet.
+    const PEOPLE_COLS = [
+      { key: "name", label: "Name", val: (p) => (p.unnamed ? "" : p.name) },
+      { key: "email", label: "Email (only when no name)", val: (p) => (p.unnamed ? p.email : "") },
+      { key: "roles", label: "Roles", val: (p) => p.roles.map(roleName).join(", ") },
+      { key: "field", label: "Field of study", val: (p) => p.field || "" },
+      { key: "univ", label: "University", val: (p) => p.inst || "" },
+      { key: "tuniv", label: "Target university", val: (p) => p.tuniv || "" },
+      { key: "position", label: "Management position", val: (p) => p.mpos || "" },
+      { key: "division", label: "Division", val: (p) => p.mdiv || "" },
+      { key: "level", label: "Level", val: (p) => p.mlevel || "" },
+      { key: "applied", label: "Applied for", val: (p) => p.applied || "" },
+      { key: "city", label: "City", val: (p) => p.city || "" },
+      { key: "province", label: "Province", val: (p) => p.province || "" },
+      { key: "region", label: "Region", val: (p) => p.region || "" },
+      { key: "country", label: "Country", val: (p) => p.country || "" },
+      { key: "study", label: "Studied in", val: (p) => p.study || "" },
+      { key: "target", label: "Wants to study in", val: (p) => p.target || "" },
+      { key: "fy", label: "First year", val: (p) => p.fy || "", num: true },
+      { key: "ly", label: "Last year", val: (p) => p.ly || "", num: true },
+      { key: "yrs", label: "Years with IM", val: (p) => p.yrs || 0, num: true },
+      { key: "ev", label: "Events attended", val: (p) => p.ev || 0, num: true },
+      { key: "sp", label: "Events spoken", val: (p) => p.sp || 0, num: true },
+      { key: "mm", label: "Mentees", val: (p) => p.mm || 0, num: true },
+      { key: "mh", label: "Mentors", val: (p) => p.mh || 0, num: true },
+      { key: "li", label: "LinkedIn", val: (p) => p.li || "" },
+      { key: "prof", label: "Profile", val: (p) => p.prof || "" },
+    ];
+    // Columns shown on screen (all of them go to the spreadsheet).
+    const PEOPLE_SHOWN = ["name", "roles", "field", "univ", "position", "city", "yrs", "ev", "mm"];
+    const tableTabs = (lay) => {
+      const tabs = [{ id: "people", label: "People affected", count: treeFilter(dir).length }];
+      const byDepth = new Map();
+      for (const it of lay.nodes) {
+        if (["root", "more", "person"].includes(it.n.kind)) continue;
+        if (!byDepth.has(it.depth)) byDepth.set(it.depth, []);
+        byDepth.get(it.depth).push(it);
+      }
+      [...byDepth.keys()].sort((a, b) => a - b).forEach((d) => {
+        const items = byDepth.get(d);
+        const kinds = {};
+        items.forEach((it) => (kinds[it.n.kind] = (kinds[it.n.kind] || 0) + 1));
+        const kind = Object.entries(kinds).sort((a, b) => b[1] - a[1])[0][0];
+        tabs.push({ id: `L${d}`, depth: d, label: KIND_CAPTION[kind] || `Level ${d}`, count: items.length, items });
+      });
+      return tabs;
+    };
+    const pathOf = (it) => { const out = []; let x = it.parent; while (x && x.n.kind !== "root") { out.unshift(x.n.label); x = x.parent; } return out; };
+    const tableData = (tab) => {
+      if (tab.id === "people") {
+        const rows = treeFilter(dir).map((p) => ({ p }));
+        return { cols: PEOPLE_COLS.map((c) => ({ ...c, get: (r) => c.val(r.p),
+          // People with no name sort after everyone else, by email.
+          sortVal: c.key === "name" ? (r) => (r.p.unnamed ? `\uffff${r.p.email}` : r.p.name) : null })), shown: PEOPLE_SHOWN, rows, kind: "people" };
+      }
+      const rows = tab.items.map((it) => ({ it, path: pathOf(it) }));
+      const cols = [
+        { key: "label", label: tab.label, get: (r) => r.it.n.label },
+        { key: "path", label: "Under", get: (r) => r.path.join(" › ") },
+        { key: "count", label: "People", get: (r) => r.it.n.people.size, num: true },
+      ];
+      return { cols, shown: cols.map((c) => c.key), rows, kind: "groups" };
+    };
+    const toCells = (data) => [data.cols.map((c) => c.label), ...data.rows.map((r) => data.cols.map((c) => c.get(r)))];
+    const asCsv = (cells) => cells.map((row) => row.map((v) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }).join(",")).join("\r\n");
+    const asTsv = (cells) => cells.map((row) => row.map((v) => String(v ?? "").replace(/[\t\n\r]+/g, " ")).join("\t")).join("\n");
+    const exportName = (tab) => `im-people-${TREE.view}-${tab.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}`;
+
     const drawTable = (lay) => {
       const box = $("#tree-table");
       if (!box) return;
-      const items = lay.nodes.filter((it) => it.n.kind !== "more" && it.n.kind !== "root");
-      if (!items.length) { box.innerHTML = `<p class="muted small" style="margin:0">Open a branch to see its rows here.</p>`; return; }
-      const depth = Math.max(...items.map((it) => it.depth));
-      const atDepth = items.filter((it) => it.depth === depth);
-      const pathOf = (it) => { const out = []; let x = it.parent; while (x && x.n.kind !== "root") { out.unshift(x.n.label); x = x.parent; } return out; };
-      const sortBy = (rows, cols) => {
-        const c = cols.find((k) => k.key === TREE.tsort.key) || cols[0];
-        return rows.sort((a, b) => { const va = c.val(a), vb = c.val(b); return (typeof va === "number" && typeof vb === "number" ? va - vb : String(va ?? "").localeCompare(String(vb ?? ""))) * TREE.tsort.dir; });
-      };
-      const PAGE = 50;
-      let cols, rows, title;
-      if (atDepth.some((it) => it.n.kind === "person")) {
-        // Every person under the parents of the deepest level, deduplicated.
-        const seen = new Map();
-        for (const it of atDepth) {
-          const parent = it.parent;
-          const kids = parent ? [...parent.n.children.values()].filter((c) => c.kind === "person") : [it.n];
-          for (const k of kids) if (!seen.has(k.person)) seen.set(k.person, parent ? pathOf({ parent: parent, n: parent.n }).concat(parent.n.kind !== "root" ? [parent.n.label] : []) : []);
-        }
-        rows = [...seen.entries()].map(([i, path]) => ({ p: dir.people[i], path }));
-        title = `People · ${fmtInt(rows.length)}`;
-        cols = [
-          { key: "name", label: "Name", val: (r) => r.p.unnamed ? r.p.email : r.p.name },
-          { key: "roles", label: "Roles", val: (r) => r.p.roles.map(roleName).join(", ") },
-          { key: "field", label: "Field of study", val: (r) => r.p.field || "" },
-          { key: "univ", label: "University", val: (r) => r.p.inst || r.p.tuniv || "" },
-          { key: "position", label: "Position", val: (r) => r.p.mpos || "" },
-          { key: "city", label: "Lives in", val: (r) => r.p.city || r.p.province || (r.p.country !== "Indonesia" ? r.p.country : "") || "" },
-          { key: "yrs", label: "Years with IM", val: (r) => r.p.yrs || 0, num: true },
-          { key: "ev", label: "Events", val: (r) => r.p.ev || 0, num: true },
-          { key: "mm", label: "Mentees", val: (r) => r.p.mm || 0, num: true },
-        ];
-        if (!cols.some((c) => c.key === TREE.tsort.key)) TREE.tsort = { key: "name", dir: 1 };
-      } else {
-        rows = atDepth.map((it) => ({ it, path: pathOf(it) }));
-        const cap = KIND_CAPTION[atDepth[0].n.kind] || "Group";
-        title = `${cap} · ${fmtInt(rows.length)}`;
-        cols = [
-          { key: "label", label: cap, val: (r) => r.it.n.label },
-          { key: "path", label: "Under", val: (r) => r.path.join(" › ") },
-          { key: "count", label: "People", val: (r) => r.it.n.people.size, num: true },
-        ];
-        if (!cols.some((c) => c.key === TREE.tsort.key)) TREE.tsort = { key: "count", dir: -1 };
-      }
-      sortBy(rows, cols);
-      const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-      TREE.tpage = Math.min(TREE.tpage, pages);
-      const slice = rows.slice((TREE.tpage - 1) * PAGE, TREE.tpage * PAGE);
-      const arrow = (k) => (TREE.tsort.key === k ? (TREE.tsort.dir > 0 ? " ▲" : " ▼") : "");
-      box.innerHTML = `<div class="tt-head"><h3>Last level shown · ${esc(title)}</h3>
-          <span class="muted small">${rows[0]?.p ? "Click a name to open the person." : "Click a row to open that branch."} Click a column to sort.</span></div>
-        <div class="table-wrap"><table class="tree-tbl"><thead><tr>${cols.map((c) => `<th class="${c.num ? "num" : ""}"><button type="button" class="th-sort" data-sort="${c.key}">${esc(c.label)}${arrow(c.key)}</button></th>`).join("")}</tr></thead><tbody>
-        ${slice.map((r, i) => r.p
+      const tabs = tableTabs(lay);
+      if (!tabs.some((t) => t.id === TREE.ttab)) TREE.ttab = "people";
+      const tab = tabs.find((t) => t.id === TREE.ttab);
+      const data = tableData(tab);
+      const sortKey = TREE.tsorts?.[tab.id] || (data.kind === "people" ? { key: "name", dir: 1 } : { key: "count", dir: -1 });
+      const sc = data.cols.find((c) => c.key === sortKey.key) || data.cols[0];
+      data.rows.sort((a, b) => { const va = (sc.sortVal || sc.get)(a), vb = (sc.sortVal || sc.get)(b); return (typeof va === "number" && typeof vb === "number" ? va - vb : String(va ?? "").localeCompare(String(vb ?? ""))) * sortKey.dir; });
+      const PAGE = 50, pages = Math.max(1, Math.ceil(data.rows.length / PAGE));
+      TREE.tpage = Math.min(Math.max(1, TREE.tpage), pages);
+      const slice = data.rows.slice((TREE.tpage - 1) * PAGE, TREE.tpage * PAGE);
+      const shownCols = data.cols.filter((c) => data.shown.includes(c.key));
+      const arrow = (k) => (sortKey.key === k ? (sortKey.dir > 0 ? " ▲" : " ▼") : "");
+      box.innerHTML = `<div class="tt-tabs" role="tablist">${tabs.map((t, i) => `${i === 1 ? '<span class="tt-sep" aria-hidden="true"></span>' : ""}<button type="button" role="tab" class="tt-tab ${t.id === tab.id ? "on" : ""}" data-ttab="${t.id}" aria-selected="${t.id === tab.id}">
+          ${t.id === "people" ? icon("people", 12) : `<span class="tt-lvl">${t.depth}</span>`} ${esc(t.label)} <span class="tt-n">${fmtInt(t.count)}</span></button>`).join("")}</div>
+        <div class="tt-head"><span class="muted small">${data.kind === "people" ? `People gold for everyone in the current view, filters and search${data.cols.length > shownCols.length ? ` · ${shownCols.length} of ${data.cols.length} columns on screen, all ${data.cols.length} in the spreadsheet` : ""}. Click a name to open the person.`
+            : `Level ${tab.depth} of the tree: every ${esc(tab.label.toLowerCase())} shown. Click a row to open it.`}</span>
+          <span class="tt-export"><button type="button" class="btn btn-sm btn-primary" data-export="sheets">${icon("sheet", 12)} Open in Google Sheets</button>
+            <button type="button" class="btn btn-sm" data-export="csv">Download CSV</button><button type="button" class="btn btn-sm" data-export="copy">Copy</button></span></div>
+        <div class="tt-msg small" aria-live="polite"></div>
+        <div class="table-wrap"><table class="tree-tbl"><thead><tr>${shownCols.map((c) => `<th class="${c.num ? "num" : ""}"><button type="button" class="th-sort" data-sort="${c.key}">${esc(c.label)}${arrow(c.key)}</button></th>`).join("")}</tr></thead><tbody>
+        ${slice.map((r) => r.p
           ? `<tr data-person="${r.p.i}" tabindex="0"><td><span class="ini sm" style="background:var(${r.p.unnamed ? "--c9" : roleColor(r.p.roles[0])})">${esc(initials(r.p.name))}</span> <span class="${r.p.unnamed ? "mono small" : ""}">${esc(r.p.unnamed ? r.p.email : r.p.name)}</span></td>
-              ${cols.slice(1).map((c) => `<td class="${c.num ? "num" : "small"}">${c.num ? fmtInt(c.val(r)) : esc(c.val(r) || "–")}</td>`).join("")}</tr>`
-          : `<tr data-key="${esc(r.it.n.key)}" tabindex="0"><td><span class="tt-dot" style="background:var(${r.it.n.color})"></span> ${esc(r.it.n.label)}</td><td class="small muted">${esc(r.path.join(" › ") || "–")}</td><td class="num">${fmtInt(r.it.n.people.size)}</td></tr>`).join("")}
+              ${shownCols.slice(1).map((c) => `<td class="${c.num ? "num" : "small"}">${c.num ? fmtInt(c.get(r)) : esc(c.get(r) || "–")}</td>`).join("")}</tr>`
+          : `<tr data-key="${esc(r.it.n.key)}" tabindex="0"><td><span class="tt-dot" style="background:var(${r.it.n.color})"></span> ${esc(r.it.n.label)}</td><td class="small muted">${esc(r.path.join(" › ") || "–")}</td><td class="num">${fmtInt(r.it.n.people.size)}</td></tr>`).join("")
+          || `<tr><td colspan="${shownCols.length}" class="empty">No one in the current view.</td></tr>`}
         </tbody></table></div>
         ${pages > 1 ? `<div class="tt-pager"><button type="button" class="btn btn-sm" data-page="-1" ${TREE.tpage <= 1 ? "disabled" : ""}>Previous</button>
-          <span class="muted small">Page ${TREE.tpage} of ${pages} · rows ${fmtInt((TREE.tpage - 1) * PAGE + 1)}–${fmtInt(Math.min(rows.length, TREE.tpage * PAGE))} of ${fmtInt(rows.length)}</span>
+          <span class="muted small">Page ${TREE.tpage} of ${pages} · rows ${fmtInt((TREE.tpage - 1) * PAGE + 1)}–${fmtInt(Math.min(data.rows.length, TREE.tpage * PAGE))} of ${fmtInt(data.rows.length)}</span>
           <button type="button" class="btn btn-sm" data-page="1" ${TREE.tpage >= pages ? "disabled" : ""}>Next</button></div>` : ""}`;
+      $$("[data-ttab]", box).forEach((b) => b.addEventListener("click", () => { TREE.ttab = b.dataset.ttab; TREE.tpage = 1; drawTable(lay); }));
       $$("[data-sort]", box).forEach((b) => b.addEventListener("click", () => {
-        TREE.tsort = TREE.tsort.key === b.dataset.sort ? { key: b.dataset.sort, dir: -TREE.tsort.dir } : { key: b.dataset.sort, dir: cols.find((c) => c.key === b.dataset.sort)?.num ? -1 : 1 };
+        const k = b.dataset.sort, num = data.cols.find((c) => c.key === k)?.num;
+        TREE.tsorts = { ...(TREE.tsorts || {}), [tab.id]: sortKey.key === k ? { key: k, dir: -sortKey.dir } : { key: k, dir: num ? -1 : 1 } };
         TREE.tpage = 1; drawTable(lay);
       }));
       $$("[data-page]", box).forEach((b) => b.addEventListener("click", () => { TREE.tpage += +b.dataset.page; drawTable(lay); }));
@@ -2016,10 +2054,32 @@
         tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
       });
       $$("tr[data-key]", box).forEach((tr) => {
-        const open = () => { TREE.expanded.add(tr.dataset.key); TREE.auto = false; render(); };
+        const open = () => { const k = tr.dataset.key; let a = k; while (a.includes("/")) { TREE.expanded.add(a); a = a.slice(0, a.lastIndexOf("/")); } TREE.expanded.add("root"); TREE.auto = false; render(); };
         tr.addEventListener("click", open);
         tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
       });
+      // Spreadsheet: every row and every column of the active tab (sorted as on screen).
+      const msg = $(".tt-msg", box);
+      $$("[data-export]", box).forEach((b) => b.addEventListener("click", async () => {
+        const cells = toCells(data), how = b.dataset.export;
+        if (how === "csv") {
+          const blob = new Blob(["﻿" + asCsv(cells)], { type: "text/csv;charset=utf-8" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob); a.download = `${exportName(tab)}.csv`;
+          document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+          msg.textContent = `Downloaded ${fmtInt(cells.length - 1)} rows. It opens in Excel, Numbers or Google Sheets (File → Import).`;
+          return;
+        }
+        let copied = false;
+        try { await navigator.clipboard.writeText(asTsv(cells)); copied = true; } catch { /* clipboard blocked */ }
+        if (how === "sheets") {
+          window.open("https://sheets.new", "_blank", "noopener");
+          msg.textContent = copied ? `A new Google Sheet is opening. Click cell A1 and paste (Ctrl+V / ⌘V): ${fmtInt(cells.length - 1)} rows, ${cells[0].length} columns.`
+            : "A new Google Sheet is opening, but the browser blocked the clipboard: use Download CSV and File → Import instead.";
+        } else {
+          msg.textContent = copied ? `Copied ${fmtInt(cells.length - 1)} rows. Paste into any spreadsheet.` : "The browser blocked the clipboard: use Download CSV.";
+        }
+      }));
     };
 
     const toggle = (g) => {
