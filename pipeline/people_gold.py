@@ -157,6 +157,66 @@ def title_case(raw) -> str | None:
     return " ".join(out)
 
 
+# Common short names and spellings of universities, so one campus is one branch in the tree.
+UNIVERSITY_ALIASES = {
+    "ui": "Universitas Indonesia", "univ indonesia": "Universitas Indonesia", "university of indonesia": "Universitas Indonesia",
+    "itb": "Institut Teknologi Bandung", "bandung institute of technology": "Institut Teknologi Bandung",
+    "ugm": "Universitas Gadjah Mada", "gadjah mada university": "Universitas Gadjah Mada", "universitas gajah mada": "Universitas Gadjah Mada",
+    "its": "Institut Teknologi Sepuluh Nopember", "ipb": "IPB University", "institut pertanian bogor": "IPB University",
+    "unair": "Universitas Airlangga", "airlangga university": "Universitas Airlangga", "unpad": "Universitas Padjadjaran",
+    "padjadjaran university": "Universitas Padjadjaran", "undip": "Universitas Diponegoro", "diponegoro university": "Universitas Diponegoro",
+    "ub": "Universitas Brawijaya", "brawijaya university": "Universitas Brawijaya", "binus": "BINUS University",
+    "bina nusantara university": "BINUS University", "uns": "Universitas Sebelas Maret", "unhas": "Universitas Hasanuddin",
+    "usu": "Universitas Sumatera Utara", "upi": "Universitas Pendidikan Indonesia", "uny": "Universitas Negeri Yogyakarta",
+    "telkom university": "Telkom University", "tel u": "Telkom University", "prasmul": "Universitas Prasetiya Mulya",
+    "nus": "National University of Singapore", "ntu": "Nanyang Technological University", "ucl": "University College London",
+    "lse": "London School of Economics", "mit": "Massachusetts Institute of Technology", "anu": "Australian National University",
+    "tu delft": "Delft University of Technology", "delft university of technology": "Delft University of Technology",
+    "kth": "KTH Royal Institute of Technology", "eth zurich": "ETH Zurich", "eth": "ETH Zurich", "tum": "Technical University of Munich",
+    "tu munich": "Technical University of Munich", "unimelb": "University of Melbourne", "the university of melbourne": "University of Melbourne",
+    "unsw": "UNSW Sydney", "usyd": "University of Sydney", "the university of sydney": "University of Sydney", "uq": "University of Queensland",
+    "the university of queensland": "University of Queensland", "monash": "Monash University", "kyoto university": "Kyoto University",
+    "the university of tokyo": "University of Tokyo", "utokyo": "University of Tokyo", "snu": "Seoul National University",
+    "kaist": "KAIST", "wur": "Wageningen University & Research", "wageningen university": "Wageningen University & Research",
+    "the university of edinburgh": "University of Edinburgh", "university of oxford": "University of Oxford", "oxford": "University of Oxford",
+    "university of cambridge": "University of Cambridge", "cambridge": "University of Cambridge",
+}
+FIELD_ALIASES = {
+    "social science": "Social Sciences", "social sciences": "Social Sciences", "humanities": "Arts and Humanities",
+    "arts and humanities": "Arts and Humanities", "art and humanities": "Arts and Humanities", "stem": "Science and Engineering",
+    "natural science": "Natural Sciences", "natural sciences": "Natural Sciences", "life science": "Life Sciences", "life sciences": "Life Sciences",
+    "health science": "Health Sciences", "health sciences": "Health Sciences", "medicine and health": "Health Sciences",
+    "business": "Business and Management", "business and management": "Business and Management", "management": "Business and Management",
+    "economics": "Economics", "economic": "Economics", "engineering": "Engineering", "engineering and technology": "Engineering",
+    "computer science": "Computer Science", "computing": "Computer Science", "it": "Computer Science", "public policy": "Public Policy",
+    "law": "Law", "education": "Education", "agriculture": "Agriculture",
+}
+
+
+def _alias_key(raw) -> str:
+    return re.sub(r"[^a-z0-9& ]+", " ", str(raw).lower()).replace("  ", " ").strip()
+
+
+def university(raw) -> str | None:
+    """One name per campus: known short names and spellings mapped, otherwise tidied (proper case for ALL CAPS)."""
+    s = clean_label(raw)
+    if not s:
+        return None
+    k = re.sub(r"\s+", " ", _alias_key(s))
+    if k in UNIVERSITY_ALIASES:
+        return UNIVERSITY_ALIASES[k]
+    k2 = re.sub(r"^the ", "", k)
+    return UNIVERSITY_ALIASES.get(k2) or title_case(s)
+
+
+def field_of_study(raw) -> str | None:
+    s = clean_label(raw)
+    if not s:
+        return None
+    k = re.sub(r"\s+", " ", _alias_key(s))
+    return FIELD_ALIASES.get(k) or title_case(s)
+
+
 def position_level(position: str | None) -> str | None:
     if not position:
         return None
@@ -340,7 +400,7 @@ def build(records: list[P.Record], result: dict, mentorships: list[dict], places
         mentor_country = places.country_of(a("doctoral_country")) or places.country_of(a("master_country")) \
             or places.country_of(a("institution_country"))
         target_country = places.country_of(a("target_country"))
-        institution = clean_label(a("doctoral_institution") or a("master_institution") or a("institution") or a("bachelor_institution"))
+        institution = university(a("doctoral_institution") or a("master_institution") or a("institution") or a("bachelor_institution"))
         labels = set(p["labels"])
         ev = attended.get(pid, {})
         # Management: positions held (member records) by year, newest first; and the position applied for.
@@ -375,8 +435,8 @@ def build(records: list[P.Record], result: dict, mentorships: list[dict], places
             "birth_city": birth["city"], "birth_province": birth["province"], "birth_island_region": birth["island_region"],
             "birth_country": birth["country"], "origin_country": origin_country,
             "study_country": mentor_country, "study_world_region": places.world.get(mentor_country) if mentor_country else None,
-            "target_country": target_country, "target_university": clean_label(a("target_university")),
-            "institution": institution, "area_of_study": clean_label(a("area_of_study")),
+            "target_country": target_country, "target_university": university(a("target_university")),
+            "institution": institution, "area_of_study": field_of_study(a("area_of_study")),
             "occupation_institution": clean_label(a("occupation_institution")),
             "events_attended": len(ev.get("participants", set())), "events_spoken": len(ev.get("speakers", set())),
             "events_committee": len(ev.get("committee", set())),
@@ -585,7 +645,8 @@ def aggregate_graph(gold: list[dict], events: list[dict], mentorships: list[dict
 DIRECTORY_FIELDS = ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
                     "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had",
                     "birth_city", "birth_province", "birth_region", "origin_country", "years_with_im", "linkedin", "profile",
-                    "email_variants", "email_hint", "mgmt_position", "mgmt_division", "mgmt_level", "mgmt_history", "applied_position"]
+                    "email_variants", "email_hint", "mgmt_position", "mgmt_division", "mgmt_level", "mgmt_history", "applied_position",
+                    "area_of_study", "target_university"]
 
 
 def directory(built: dict, mentorships: list[dict], review: list[dict] | None = None, dups: list[dict] | None = None,
@@ -604,7 +665,8 @@ def directory(built: dict, mentorships: list[dict], review: list[dict] | None = 
                g["events_spoken"], g["mentees_mentored"], g["mentors_had"], g["birth_city"], g["birth_province"],
                g["birth_island_region"], g["origin_country"], g["years_with_im"], g["linkedin_url"], g["profile_url"],
                g["email_variants"], (g["email"] or hints.get(g["person_id"])) if not g["full_name"] else None,
-               g["mgmt_position"], g["mgmt_division"], g["mgmt_level"], g["mgmt_history"], g["applied_position"]] for g in gold]
+               g["mgmt_position"], g["mgmt_division"], g["mgmt_level"], g["mgmt_history"], g["applied_position"],
+               g["area_of_study"], g["target_university"]] for g in gold]
     pairs = [[index[m["mentor_id"]], index[m["mentee_id"]], m["program"], m["year"]] for m in mentorships
              if m["mentor_id"] in index and m["mentee_id"] in index]
     events = []

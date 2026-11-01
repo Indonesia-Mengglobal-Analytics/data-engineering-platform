@@ -9,15 +9,26 @@ github:
   workflow_file: pipeline.yml
   query_workflow_file: query.yml
 
-sources:
-  # Every Google Sheet in this Drive folder is discovered on each run. Share the
-  # folder with the service account (GOOGLE_SERVICE_ACCOUNT_JSON) as Viewer.
-  drive_folder_ids: []
-  # Sheets registered by ID, in addition to the folder.
-  spreadsheet_ids:
-    - 1LpvKvoXsVdYsUqtYHXK1GEubUw9uykE1RTIs2bHJaLI  # Mentee_Data_PhD_Mentorship_2026
-    - 1hUpoba7UJ0qQgX10GWsYlNewfVILi44YgULhLHSM-wc
-    - 1a2FvVl2QpeCat886BT4h5dKVjNk6UVNp0IvZveWsLPs
+# Environments (dev / prd). Every Google Sheet in the active environment's Data Sources folder is fed to the
+# platform as a source and a catalog entry (the "Data Sources (dev/prd)" box in the team's diagram), on the daily
+# schedule or a manual run. Share each folder with the service account (GOOGLE_SERVICE_ACCOUNT_JSON) as Viewer.
+# The workflows run the environment below unless a manual run picks another (input "environment").
+environment: dev
+environments:
+  dev:
+    label: DEV
+    # The (dev) Data Sources folder. Put its ID here; every sheet inside is discovered on each run.
+    drive_folder_ids: []
+    # Sheets registered by ID, in addition to the folder.
+    spreadsheet_ids:
+      - 1LpvKvoXsVdYsUqtYHXK1GEubUw9uykE1RTIs2bHJaLI  # Mentee_Data_PhD_Mentorship_2026
+      - 1hUpoba7UJ0qQgX10GWsYlNewfVILi44YgULhLHSM-wc  # Mentor_Data_PhD_Mentorship_2026
+      - 1a2FvVl2QpeCat886BT4h5dKVjNk6UVNp0IvZveWsLPs
+  prd:
+    label: PRD
+    # The (prd) Data Sources folder, once sheets are promoted from dev.
+    drive_folder_ids: []
+    spreadsheet_ids: []
 
 # Lakehouse storage and spreadsheet outputs. Create a Shared Drive folder, add the service account
 # as Content manager, and put the folder ID here. Left empty, the lakehouse lives only inside each run

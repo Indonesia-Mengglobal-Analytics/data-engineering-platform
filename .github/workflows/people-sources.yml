@@ -1,0 +1,69 @@
+name: Manage people sources (archive / restore)
+
+# Archives or restores one people source (a source tab or pairing sheet in config/people.yml). The change is committed
+# to config/people_sources_state.yml (who, when, why) and the people job runs again, so people gold, the tree, every
+# count and the lineage reflect it. Started from the site (People -> Lineage or Sources) or from the Actions tab.
+run-name: "${{ inputs.action }} people source: ${{ inputs.source }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "archive or restore"
+        type: choice
+        options: [archive, restore]
+        required: true
+      source:
+        description: "Source key from config/people.yml (shown on People -> Sources)"
+        required: true
+      reason:
+        description: "Why (kept in the history)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: people-sources
+  cancel-in-progress: false
+
+jobs:
+  change:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==6.0.2
+      - name: Update the source state
+        env:
+          ACTION: ${{ inputs.action }}
+          SOURCE: ${{ inputs.source }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+        run: python pipeline/people_sources.py "$ACTION" "$SOURCE" --reason "$REASON" --actor "$ACTOR"
+      - name: Commit
+        id: commit
+        env:
+          ACTION: ${{ inputs.action }}
+          SOURCE: ${{ inputs.source }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "People source ${ACTION}: ${SOURCE}" -m "Requested by ${ACTOR}. ${REASON}"
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      # A push made with GITHUB_TOKEN does not start workflows, so the people job is started explicitly.
+      - name: Rebuild people gold
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run people.yml --ref main

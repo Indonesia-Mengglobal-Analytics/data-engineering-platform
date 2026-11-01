@@ -31,10 +31,11 @@ import people as P  # noqa: E402
 import people_gold as G  # noqa: E402
 import people_anomaly as A  # noqa: E402
 import people_catalog  # noqa: E402
+import people_sources  # noqa: E402
 import people_lineage  # noqa: E402
 from exports import GoogleSheets, LocalSheets, table  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
-from sources import GoogleSource  # noqa: E402
+from sources import GoogleSource, active_environment  # noqa: E402
 from storage import DriveStorage, LocalStorage  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -153,7 +154,9 @@ def aggregates(records, result, inventory, labels_cfg, config) -> dict:
             anomalies[a]["by_source"][r.source] += 1
     return {
         "kpis": {
-            "sources_configured": len(inventory), "sources_read": sum(1 for s in inventory if s["status"] == "read"),
+            "sources_configured": sum(1 for s in inventory if s["status"] != "archived"),
+            "sources_read": sum(1 for s in inventory if s["status"] == "read"),
+            "sources_archived": sum(1 for s in inventory if s["status"] == "archived"),
             "records": len(records), "excluded": len(records) - len(kept), "people": len(people), "activities": len(acts),
             "merged_records": len(kept) - len(people), "review_items": len(review),
             "with_phone": sum(1 for p in people if p["phone"]), "multi_role": sum(1 for p in people if len(p["labels"]) > 1),
@@ -181,7 +184,7 @@ def write_tables(con, records, result, inventory) -> None:
     con.execute("""CREATE OR REPLACE TABLE people.records (source VARCHAR, sheet_row BIGINT, label VARCHAR, status VARCHAR,
                    year INTEGER, event VARCHAR, email_raw VARCHAR, email VARCHAR, full_name VARCHAR, phone VARCHAR,
                    anomalies VARCHAR, excluded BOOLEAN, person_id VARCHAR)""")
-    con.executemany("INSERT INTO people.records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [
         [r.source, r.sheet_row, r.label, r.status, r.year, r.event, None if r.email_raw is None else str(r.email_raw),
          r.email, r.name, r.phone, ", ".join(sorted(set(r.anomalies))), r.excluded,
          None if r.excluded or not r.email else P.person_id(r.email)] for r in records])
@@ -192,7 +195,7 @@ def write_tables(con, records, result, inventory) -> None:
     for rv in result["review"]:
         for pid in rv["person_ids"]:
             review_by_person[pid].append(rv["review_id"])
-    con.executemany("INSERT INTO people.people VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.people VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
         [p["person_id"], p["full_name"], p["email"], p["email_key"], ", ".join(p["raw_emails"]), p["phone"], p["linkedin"],
          ", ".join(map(str, p["years"])), p["first_year"], p["last_year"], ", ".join(p["labels"]), p["n_records"],
          p["n_sources"], " | ".join(p["name_variants"]), ", ".join(review_by_person[p["person_id"]])] for p in result["people"]])
@@ -205,18 +208,25 @@ def write_tables(con, records, result, inventory) -> None:
         return_rows.append([a["activity_id"], a["person_id"], a["full_name"], a["email"], a["activity_year"], a["label"],
                             info.get("domain"), info.get("education_level"), info.get("role"), a["status"], a["event"],
                             ", ".join(sorted(a["sources"]))])
-    con.executemany("INSERT INTO people.activities VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", return_rows)
+    insert_many(con, "INSERT INTO people.activities VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", return_rows)
     con.execute("""CREATE OR REPLACE TABLE people.anomalies AS
                    SELECT source, sheet_row, unnest(string_split(anomalies, ', ')) AS rule, label, year, email_raw, full_name, excluded
                    FROM people.records WHERE anomalies <> ''""")
     con.execute("""CREATE OR REPLACE TABLE people.review (review_id VARCHAR, type VARCHAR, person_ids VARCHAR, detail VARCHAR,
                    suggestion VARCHAR, decision VARCHAR)""")
-    con.executemany("INSERT INTO people.review VALUES (?,?,?,?,?,'')", [
+    insert_many(con, "INSERT INTO people.review VALUES (?,?,?,?,?,'')", [
         [r["review_id"], r["type"], ", ".join(r["person_ids"]), r["detail"], r["suggestion"]] for r in result["review"]])
     con.execute("CREATE OR REPLACE TABLE people.sources (key VARCHAR, title VARCHAR, label VARCHAR, status VARCHAR, rows BIGINT, records BIGINT, excluded BIGINT, error VARCHAR)")
-    con.executemany("INSERT INTO people.sources VALUES (?,?,?,?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.sources VALUES (?,?,?,?,?,?,?,?)", [
         [s["key"], s["title"], s["label"], s["status"], s.get("rows", 0), s.get("records", 0), s.get("excluded", 0), s.get("error")]
         for s in inventory])
+
+
+def insert_many(con, sql: str, rows) -> None:
+    """executemany that accepts no rows (an archived or empty source leaves a table empty)."""
+    rows = list(rows)
+    if rows:
+        con.executemany(sql, rows)
 
 
 def pairing_tabs(pairings: list[dict]) -> list[dict]:
@@ -234,7 +244,7 @@ def write_detect(con, records, dups: list[dict], result: dict) -> None:
     con.execute("ALTER TABLE people.records ADD COLUMN IF NOT EXISTS dummy_level VARCHAR")
     con.execute("ALTER TABLE people.records ADD COLUMN IF NOT EXISTS dummy_reasons VARCHAR")
     con.execute("CREATE TEMP TABLE _scores (source VARCHAR, sheet_row BIGINT, p DOUBLE, lvl VARCHAR, why VARCHAR)")
-    con.executemany("INSERT INTO _scores VALUES (?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO _scores VALUES (?,?,?,?,?)", [
         [r.source, r.sheet_row, round(r.dummy_p, 4), A.level(r.dummy_p), "; ".join(label for _, label, _ in r.dummy_reasons)] for r in records])
     con.execute("""UPDATE people.records AS t SET dummy_probability = s.p, dummy_level = s.lvl, dummy_reasons = s.why
                    FROM _scores s WHERE t.source = s.source AND t.sheet_row = s.sheet_row""")
@@ -245,7 +255,7 @@ def write_detect(con, records, dups: list[dict], result: dict) -> None:
     people = {p["person_id"]: p for p in result["people"]}
     con.execute("""CREATE OR REPLACE TABLE people.duplicate_candidates (probability DOUBLE, type VARCHAR, reasons VARCHAR, person_a VARCHAR,
                    name_a VARCHAR, email_a VARCHAR, person_b VARCHAR, name_b VARCHAR, email_b VARCHAR, name_similarity DOUBLE, review_id VARCHAR)""")
-    con.executemany("INSERT INTO people.duplicate_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.duplicate_candidates VALUES (?,?,?,?,?,?,?,?,?,?,?)", [
         [d["probability"], d["type"], "; ".join(f"{label} ({w:+.1f})" for _, label, w in d["reasons"]), d["a"], people[d["a"]]["full_name"],
          people[d["a"]]["email"], d["b"], people[d["b"]]["full_name"], people[d["b"]]["email"], d["name_similarity"], d["review_id"]]
         for d in dups])
@@ -259,24 +269,24 @@ def write_gold(con, built: dict, mentorships: list[dict]) -> None:
     defs = ", ".join(f'"{c}" {types.get(type(sample.get(c)), "VARCHAR")}' for c in cols)
     con.execute(f"CREATE OR REPLACE TABLE people.gold_people ({defs})")
     if gold:
-        con.executemany(f"INSERT INTO people.gold_people VALUES ({','.join('?' * len(cols))})", [[g[c] for c in cols] for g in gold])
+        insert_many(con, f"INSERT INTO people.gold_people VALUES ({','.join('?' * len(cols))})", [[g[c] for c in cols] for g in gold])
     names = {g["person_id"]: (g["full_name"], g["email"]) for g in gold}
     con.execute("""CREATE OR REPLACE TABLE people.mentorships (mentorship_id VARCHAR, program VARCHAR, year INTEGER, mentor_id VARCHAR,
                    mentor_name VARCHAR, mentor_email VARCHAR, mentee_id VARCHAR, mentee_name VARCHAR, mentee_email VARCHAR,
                    "group" VARCHAR, match VARCHAR, source VARCHAR)""")
-    con.executemany("INSERT INTO people.mentorships VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.mentorships VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
         [m["mentorship_id"], m["program"], m["year"], m["mentor_id"], *names.get(m["mentor_id"], (None, None)),
          m["mentee_id"], *names.get(m["mentee_id"], (None, None)), m["group"], m["match"], m["source"]] for m in mentorships])
     con.execute("""CREATE OR REPLACE TABLE people.events (event_id VARCHAR, event_name VARCHAR, event_year INTEGER,
                    participants INTEGER, speakers INTEGER, committee INTEGER)""")
-    con.executemany("INSERT INTO people.events VALUES (?,?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.events VALUES (?,?,?,?,?,?)", [
         [e["event_id"], e["event_name"], e["event_year"], e["participants"], e["speakers"], e["committee"]] for e in built["events"]])
     con.execute("""CREATE OR REPLACE TABLE people.graph_nodes (node_id VARCHAR, node_type VARCHAR, label VARCHAR, properties VARCHAR)""")
-    con.executemany("INSERT INTO people.graph_nodes VALUES (?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.graph_nodes VALUES (?,?,?,?)", [
         [n["node_id"], n["node_type"], n["label"], json.dumps({k: v for k, v in n.items() if k not in ("node_id", "node_type", "label")})]
         for n in built["nodes"]])
     con.execute("""CREATE OR REPLACE TABLE people.graph_edges (src VARCHAR, dst VARCHAR, edge_type VARCHAR, year INTEGER, properties VARCHAR)""")
-    con.executemany("INSERT INTO people.graph_edges VALUES (?,?,?,?,?)", [
+    insert_many(con, "INSERT INTO people.graph_edges VALUES (?,?,?,?,?)", [
         [e["src"], e["dst"], e["edge_type"], e.get("year"), json.dumps({k: v for k, v in e.items() if k not in ("src", "dst", "edge_type", "year")})]
         for e in built["edges"]])
 
@@ -295,6 +305,15 @@ def main() -> int:
     platform = yaml.safe_load((ROOT / "config" / "platform.yml").read_text())
     config = yaml.safe_load((ROOT / "config" / "people.yml").read_text())["people"]
     LABELS.update(config["labels"])
+    # Archived sources (config/people_sources_state.yml) are not read; they are listed as archived everywhere.
+    archived = people_sources.load_state()["archived"]
+    all_sources, all_pairings = config["sources"], config.get("pairings", [])
+    config["sources"] = [s for s in all_sources if s["key"] not in archived]
+    config["pairings"] = [s for s in all_pairings if s["key"] not in archived]
+    archived_entries = [{"key": s["key"], "title": s.get("title", s["key"]), "label": s.get("label") or f"{s.get('program')}_PAIRING",
+                         "spreadsheet_id": s.get("spreadsheet_id"), "tab": s.get("tab"), "status": "archived", "rows": 0,
+                         "archived": archived[s["key"]], "pairing": s in all_pairings}
+                        for s in all_sources + all_pairings if s["key"] in archived]
     pin = os.environ.get("SITE_PIN", "").strip()
     sealer = Sealer(pin)
     out = Path(args.out)
@@ -310,7 +329,8 @@ def main() -> int:
     run = {"run_id": (f"{os.environ['GITHUB_RUN_ID']}.{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}"
                       if os.environ.get("GITHUB_RUN_ID") else f"local-{int(time.time())}-{os.getpid()}"),
            "run_number": os.environ.get("GITHUB_RUN_NUMBER"), "trigger": os.environ.get("GITHUB_EVENT_NAME", "local"),
-           "actor": os.environ.get("GITHUB_ACTOR", os.environ.get("USER", "local")), "started_at": P.utcnow()}
+           "actor": os.environ.get("GITHUB_ACTOR", os.environ.get("USER", "local")), "started_at": P.utcnow(),
+           "environment": active_environment(platform)[0]}
     if os.environ.get("GITHUB_RUN_ID"):
         run["url"] = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     tasks, started, failed, payload, directory = [], time.monotonic(), None, None, None
@@ -355,11 +375,13 @@ def main() -> int:
         tabs = step("read", read)
         records, inventory = step("normalize", P.run_checks, config["sources"], tabs, config["columns"], min_year, max_year,
                                   config.get("attributes", {}))
+        inventory += [e for e in archived_entries if not e["pairing"]]
         result = step("resolve", P.resolve, records)
 
         def gold():
             places = G.Places(yaml.safe_load((ROOT / "config" / "places.yml").read_text()))
             links, pair_inventory = G.read_pairings(config.get("pairings", []), tabs, result, records)
+            pair_inventory += [{**e, "program": e["label"].split("_")[0], "year": None, "links": 0} for e in archived_entries if e["pairing"]]
             return G.build(records, result, links, places), links, pair_inventory
         built, links, pair_inventory = step("gold", gold)
 
@@ -417,7 +439,7 @@ def main() -> int:
         payload["outputs"] = {"sheet": stored["sheet"], "storage": stored["kind"]}
         payload["catalog"] = people_catalog.build(con, bool(config.get("publish_directory")))
         payload["lineage"] = people_lineage.build(inventory, pair_inventory, records, result, built, links, config, payload["outputs"])
-        run["status"] = "succeeded" if all(s["status"] == "read" for s in inventory) else "partial"
+        run["status"] = "succeeded" if all(s["status"] in ("read", "archived") for s in inventory) else "partial"
         run["summary"] = {k: payload["kpis"][k] for k in ("records", "excluded", "people", "merged_records", "review_items", "sources_read")}
         run["summary"]["mentorships"] = len(links)
         run["summary"].update({"dummy_likely": detector["dummy"]["likely"], "dummy_suspicious": detector["dummy"]["suspicious"],
@@ -440,8 +462,10 @@ def main() -> int:
             payload = unseal(json.loads((Path(previous_dir) / "people.json").read_text()), pin)
         except Exception:
             payload = None
+    env_name, env = active_environment(platform)
     doc = {**(payload or {}), "generated_at": run["finished_at"], "runs": runs,
-           "workflow": {"repository": platform["github"]["repository"], "file": "people.yml"}}
+           "workflow": {"repository": platform["github"]["repository"], "file": "people.yml",
+                        "environment": env_name, "environment_label": env["label"]}}
     (out / "people.json").write_text(json.dumps(sealer.seal(doc)))
     # Names for the tree view: a separate sealed file, written only when the run succeeded (a failed run
     # keeps the last one) and removed when publishing is switched off.

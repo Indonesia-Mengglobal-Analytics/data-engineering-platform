@@ -83,7 +83,7 @@ DIRECTORY = {"full_name", "primary_role", "roles", "residence_city", "residence_
              "birth_city", "birth_province", "birth_island_region", "origin_country", "study_country", "target_country", "institution",
              "first_year", "last_year", "years_with_im", "events_attended", "events_spoken", "mentees_mentored", "mentors_had",
              "linkedin_url", "profile_url", "email_variants", "mgmt_position", "mgmt_division", "mgmt_level", "mgmt_history",
-             "applied_position"}
+             "applied_position", "area_of_study", "target_university"}
 COUNTS = {"residence_province", "residence_city", "residence_island_region", "residence_country", "birth_province", "study_country",
           "target_country", "institution", "area_of_study", "events_attended", "mentees_mentored", "n_roles", "primary_role", "roles",
           "first_year", "last_year"}

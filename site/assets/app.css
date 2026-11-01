@@ -673,3 +673,31 @@ table.heat thead th { white-space: normal; min-width: 64px; font-weight: 500; }
 @keyframes banner-in { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .data-banner { animation: none; } }
 .schema-sub > summary { list-style: none; cursor: pointer; }
+
+/* table of the last level shown */
+.tree-table { margin-top: 12px; padding: 14px; }
+.tt-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.tt-head h3 { margin: 0; }
+.tree-tbl tbody tr { cursor: pointer; }
+.tree-tbl tbody tr:hover, .tree-tbl tbody tr:focus-visible { background: var(--bg-subtle); outline: none; }
+.th-sort { border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: inherit; cursor: pointer; white-space: nowrap; }
+.th-sort:hover { color: var(--primary); }
+.ini.sm { width: 20px; height: 20px; font-size: 9px; vertical-align: middle; }
+.tt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: 1px; }
+.tt-pager { display: flex; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 10px; }
+
+/* archive / restore sources */
+.src-mgr { margin: 10px 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-subtle); display: grid; gap: 6px; }
+.src-mgr p { margin: 0; }
+.src-mgr input[type=text], .src-mgr input[type=password] { height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; font: inherit; background: var(--bg); color: var(--text); width: 100%; box-sizing: border-box; }
+.src-token { display: flex; gap: 6px; }
+.src-archive { justify-self: start; border-color: var(--danger); color: var(--danger); }
+.src-mgr .btn-primary { justify-self: start; }
+.src-status:empty { display: none; }
+.src-status { padding: 6px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border-subtle); }
+tr.row-archived td { opacity: .65; }
+.badge.st-skipped { color: var(--text-muted); background: var(--bg-subtle); }
+
+.env-pill { margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .06em; border: 1px solid; }
+.env-pill.env-dev { color: #b45309; background: #fef3c7; border-color: #f59e0b; }
+.env-pill.env-prd { color: var(--success); background: var(--success-soft); border-color: var(--success); }

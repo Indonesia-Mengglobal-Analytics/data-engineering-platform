@@ -10,11 +10,19 @@ on:
   schedule:
     - cron: "41 1 * * *"
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to run (dev or prd; config/platform.yml)"
+        type: choice
+        options: [dev, prd]
+        default: dev
   push:
     branches: [main]
     paths:
       - config/people.yml
       - config/places.yml
+      - config/people_sources_state.yml
+      - pipeline/people_sources.py
       - pipeline/people.py
       - pipeline/people_gold.py
       - pipeline/people_lineage.py
@@ -100,6 +108,7 @@ jobs:
           SITE_PIN: ${{ secrets.SITE_PIN }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           PREVIOUS_DIR: previous
+          PLATFORM_ENV: ${{ inputs.environment || 'dev' }}
         run: python pipeline/people_build.py
 
       # Row-level data stays in the Shared Drive; nothing local is uploaded.

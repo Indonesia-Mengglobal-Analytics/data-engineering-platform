@@ -38,7 +38,7 @@ import quality  # noqa: E402
 from exports import GoogleSheets, LocalSheets, export_outputs  # noqa: E402
 from storage import DriveStorage, LocalStorage  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
-from sources import GoogleSource, SourceError, from_fixtures  # noqa: E402
+from sources import GoogleSource, SourceError, active_environment, from_fixtures  # noqa: E402
 
 TASK_KEYS = ("discover", "validate", "bronze", "silver", "gold", "store", "govern", "export", "publish")
 
@@ -102,7 +102,8 @@ def discover(config: dict, fixtures: str | None, only: str | None, google: Googl
         return [s for s in sheets if not only or getattr(s, "spreadsheet_id", None) == only], "fixtures"
     if google is None:
         raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is not set")
-    ids = [only] if only else google.discover(config["sources"]["drive_folder_ids"], config["sources"]["spreadsheet_ids"])
+    _, env = active_environment(config)
+    ids = [only] if only else google.discover(env["drive_folder_ids"], env["spreadsheet_ids"])
     return [google.read(i) for i in ids], google.account
 
 
@@ -507,6 +508,7 @@ def main() -> int:
         "actor": os.environ.get("GITHUB_ACTOR", os.environ.get("USER", "local")),
         "only_source": only,
         "started_at": now(),
+        "environment": active_environment(config)[0],
     }
     if os.environ.get("GITHUB_RUN_ID"):
         server, repo = os.environ.get("GITHUB_SERVER_URL", "https://github.com"), os.environ.get("GITHUB_REPOSITORY", "")
@@ -565,7 +567,8 @@ def main() -> int:
     jobs = {"generated_at": run["finished_at"], "runs": runs[:MAX_RUNS],
             "workflow": {"repository": config["github"]["repository"], "file": config["github"]["workflow_file"],
                          "query_file": config["github"].get("query_workflow_file", "query.yml"),
-                         "schedule": os.environ.get("PIPELINE_SCHEDULE", "")}}
+                         "schedule": os.environ.get("PIPELINE_SCHEDULE", ""),
+                         "environment": active_environment(config)[0], "environment_label": active_environment(config)[1]["label"]}}
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

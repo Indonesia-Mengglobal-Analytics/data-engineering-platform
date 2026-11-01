@@ -229,6 +229,16 @@ downstream and see its description, inputs, outputs and columns; pick a gold col
 rule that builds it and the exact source headers that feed it. It is built by `pipeline/people_lineage.py` into
 `people.json` (counts and header names only).
 
+### Data sources: environments, rules, archiving
+
+The platform runs in **DEV** (`config/platform.yml` → `environment: dev`; the site shows a DEV label). Every sheet in the
+active environment's Data Sources folder (`environments.<env>.drive_folder_ids`) is fed to the platform, plus the sheet
+IDs listed there; manual runs can pick `dev` or `prd`. **Every new data source must appear on every page**: the rule,
+the per-page checklist and the definition of done are in [`docs/DATA_SOURCE_RULES.md`](docs/DATA_SOURCE_RULES.md),
+and `tests/test_source_coverage.py` checks it. People sources can be **archived and restored** from People → Lineage or
+People → Sources (workflow `people-sources.yml`, state in `config/people_sources_state.yml`); an archived source drops
+out of people gold, the tree, every count and the lineage until restored.
+
 ### One site, two jobs
 
 Every page reads both jobs' files, so a new run of either shows up everywhere:

@@ -76,7 +76,9 @@ def build(inventory: list[dict], pair_inventory: list[dict], records, result: di
                       "count": s.get("rows", 0), "unit": "rows", "group": s["label"],
                       "url": f"https://docs.google.com/spreadsheets/d/{s['spreadsheet_id']}" if s.get("spreadsheet_id") else None,
                       "desc": f"Google Sheet tab '{s.get('tab')}', read with the service account. Label {s['label']}."
-                              + (f" Not read: {s.get('error')}." if s["status"] != "read" else ""),
+                              + (" Archived: not read, so it is left out of people gold." if s["status"] == "archived"
+                                 else f" Not read: {s.get('error')}." if s["status"] != "read" else ""),
+                      "key": s["key"], "archived": s.get("archived"),
                       "columns": {k: v for k, v in (s.get("mapped_columns") or {}).items() if v}})
         if s["status"] == "read":
             edges.append({"from": f"src:{s['key']}", "to": "records", "count": by_source.get(s["key"], 0)})
@@ -84,7 +86,9 @@ def build(inventory: list[dict], pair_inventory: list[dict], records, result: di
         nodes.append({"id": f"pair:{s['key']}", "label": s["title"], "kind": "source", "col": 0, "status": s["status"],
                       "count": s.get("rows", 0), "unit": "pairs", "group": f"{s['program']}_PAIRING",
                       "url": f"https://docs.google.com/spreadsheets/d/{s['spreadsheet_id']}" if s.get("spreadsheet_id") else None,
+                      "key": s["key"], "archived": s.get("archived"),
                       "desc": f"Pairing sheet tab '{s.get('tab')}' ({s['program'].title()} {s.get('year') or ''})."
+                              + (" Archived: not read, so its pairs are left out." if s["status"] == "archived" else "")
                               + (f" Not linked: {', '.join(f'{k} {v}' for k, v in s['unresolved'].items())}." if s.get("unresolved") else ""),
                       "columns": {}})
         if s["status"] == "read":

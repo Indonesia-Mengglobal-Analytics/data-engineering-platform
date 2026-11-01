@@ -1,0 +1,5 @@
+# People sources that are archived: not read, so they drop out of people gold, the tree, every count and the
+# lineage until restored. Managed by .github/workflows/people-sources.yml (Archive / Restore buttons on People ->
+# Lineage and People -> Sources), which commits each change here with who, when and why. Restoring a source
+# removes its entry; the next people run reads it again. Keys are the source keys in config/people.yml.
+archived: {}

@@ -5,6 +5,11 @@ on:
     - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment to run (dev or prd; config/platform.yml)"
+        type: choice
+        options: [dev, prd]
+        default: dev
       source:
         description: "Spreadsheet ID to refresh alone (blank = all sources)"
         required: false
@@ -75,6 +80,7 @@ jobs:
           SITE_PIN: ${{ secrets.SITE_PIN }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           PREVIOUS_DIR: previous
+          PLATFORM_ENV: ${{ inputs.environment || 'dev' }}
           ONLY_SOURCE: ${{ inputs.source }}
           PIPELINE_SCHEDULE: "17 */6 * * *"
         run: python pipeline/build.py

@@ -16,6 +16,23 @@ SCOPES = [
 ]
 
 
+def active_environment(config: dict) -> tuple[str, dict]:
+    """(name, settings) of the environment to run: PLATFORM_ENV if set, else config `environment` (default dev).
+    Falls back to the older top-level `sources:` block for configs written before environments existed."""
+    import os
+
+    name = (os.environ.get("PLATFORM_ENV") or config.get("environment") or "dev").strip().lower()
+    envs = config.get("environments") or {}
+    if name in envs:
+        env = envs[name] or {}
+    elif not envs and "sources" in config:
+        env = config["sources"]
+    else:
+        raise ValueError(f"Unknown environment '{name}'. Known: {', '.join(envs) or 'none'}")
+    return name, {"label": env.get("label", name.upper()), "drive_folder_ids": env.get("drive_folder_ids") or [],
+                  "spreadsheet_ids": env.get("spreadsheet_ids") or []}
+
+
 class SourceError(Exception):
     """A sheet that is listed but can't be read (no access, deleted)."""
 

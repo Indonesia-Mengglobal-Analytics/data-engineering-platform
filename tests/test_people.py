@@ -430,3 +430,63 @@ def test_both_workflows_carry_each_others_files():
         for f in needs:
             assert f in text, (wf, f)
         assert "group: pages" in text
+
+
+def test_archived_source_drops_out_and_comes_back(tmp_path):
+    state = ROOT / "config" / "people_sources_state.yml"
+    original = state.read_text()
+
+    def run(name):
+        out = tmp_path / name
+        res = subprocess.run([sys.executable, str(ROOT / "pipeline" / "people_build.py"), "--fixtures", str(ROOT / "tests" / "fixtures" / "people"),
+                              "--lakehouse", str(tmp_path / f"lake_{name}"), "--out", str(out)],
+                             env={**{k: v for k, v in os.environ.items() if not k.startswith("GITHUB_")}, "SITE_PIN": PIN}, capture_output=True, text=True)
+        assert res.returncode == 0, res.stderr
+        return unseal(json.loads((out / "people.json").read_text()), PIN)
+
+    try:
+        state.write_text("archived:\n  pdb_event_participants: {at: '2026-11-01T00:00:00Z', by: tester, reason: test, title: events}\n"
+                         "  phd_bootcamp_pairs: {at: '2026-11-01T00:00:00Z', by: tester, reason: test, title: pairs}\n")
+        off = run("off")
+    finally:
+        state.write_text(original)
+    on = run("on")
+    src = {s["key"]: s for s in off["sources"]}
+    assert src["pdb_event_participants"]["status"] == "archived" and src["pdb_event_participants"]["archived"]["by"] == "tester"
+    assert off["kpis"]["sources_archived"] == 1 and on["kpis"]["sources_archived"] == 0
+    assert off["kpis"]["records"] < on["kpis"]["records"]
+    # Event roles disappear from people gold; the PhD pairs too.
+    labels = lambda d: {l["label"] for l in d["labels"]}  # noqa: E731
+    assert "EVENT_PARTICIPANT" in labels(on) and "EVENT_PARTICIPANT" not in labels(off)
+    assert {b["program"] for b in off["gold"]["mentorship"]["by_program"]} == {"MASTER"}
+    # Lineage: the archived source is shown as archived, with no edge into the records.
+    node = next(n for n in off["lineage"]["nodes"] if n["id"] == "src:pdb_event_participants")
+    assert node["status"] == "archived" and not any(e["from"] == node["id"] for e in off["lineage"]["edges"])
+
+
+def test_people_sources_cli(tmp_path, monkeypatch):
+    import people_sources as S
+
+    monkeypatch.setattr(S, "STATE", tmp_path / "state.yml")
+    assert S.main(["archive", "mentee_2024", "--reason", "replaced", "--actor", "hani"]) == 0
+    st = S.load_state(tmp_path / "state.yml")
+    assert st["archived"]["mentee_2024"]["by"] == "hani" and st["archived"]["mentee_2024"]["reason"] == "replaced"
+    assert S.main(["archive", "mentee_2024"]) == 0                     # already archived: no change
+    assert S.main(["archive", "no_such_source"]) == 2
+    assert S.main(["restore", "mentee_2024", "--actor", "hani"]) == 0
+    assert S.load_state(tmp_path / "state.yml")["archived"] == {}
+
+
+def test_environments(monkeypatch):
+    import yaml
+    from sources import active_environment
+
+    cfg = yaml.safe_load((ROOT / "config" / "platform.yml").read_text())
+    monkeypatch.delenv("PLATFORM_ENV", raising=False)
+    name, env = active_environment(cfg)
+    assert name == "dev" and env["label"] == "DEV" and env["spreadsheet_ids"]
+    monkeypatch.setenv("PLATFORM_ENV", "prd")
+    assert active_environment(cfg)[1]["label"] == "PRD"
+    monkeypatch.setenv("PLATFORM_ENV", "staging")
+    with pytest.raises(ValueError):
+        active_environment(cfg)

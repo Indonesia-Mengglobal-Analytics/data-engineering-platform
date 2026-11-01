@@ -239,11 +239,24 @@
     store.set("im_pin", pin);
     PIN = pin;
     watchData();
+    showEnvironment();
     $("#login").hidden = true;
     $("#app").hidden = false;
     buildSearch();
     route();
     return true;
+  }
+
+  // Environment from config/platform.yml as recorded by the last run of either job (dev until promoted).
+  function showEnvironment() {
+    const env = (D.jobs.workflow.environment || D.people?.workflow?.environment || "dev").toLowerCase();
+    const label = D.jobs.workflow.environment_label || D.people?.workflow?.environment_label || env.toUpperCase();
+    const pill = $("#env-pill");
+    pill.textContent = label;
+    pill.className = `env-pill env-${env}`;
+    pill.title = env === "prd" ? "Production data sources" : "Development environment: the dev Data Sources folder and config";
+    pill.hidden = false;
+    document.title = env === "prd" ? "IM Data Platform" : `IM Data Platform · ${label}`;
   }
 
   // ---------- new data from GitHub Actions ----------
@@ -292,6 +305,7 @@
       fitCache.clear();
       ASK.kb = null; ASK.index = null;  // Ask reloads its knowledge base on next use
       buildSearch();
+      showEnvironment();
       route();
       if (b) b.hidden = true;
     } catch {
@@ -385,7 +399,7 @@
           ${!Object.keys(D.dashboard.sources || {}).length && !D.people?.kpis ? `<p class="muted">None yet.</p>` : ""}</div>
         <div class="card"><h3>Need attention</h3>${[
           ...sources().filter((s) => s.status !== "registered").map((s) => `<p style="margin:4px 0">${badge(s.status)} <a href="#/ingestion">${esc(s.title)}</a><br><span class="muted small">${esc(s.errors[0] || "")}</span></p>`),
-          ...(D.people?.sources || []).filter((s) => s.status !== "read").map((s) => `<p style="margin:4px 0">${badge("unreachable", "people source")} <a href="#/ingestion">${esc(s.title)}</a><br><span class="muted small">${esc(s.error || "")}</span></p>`),
+          ...(D.people?.sources || []).filter((s) => s.status === "unreachable").map((s) => `<p style="margin:4px 0">${badge("unreachable", "people source")} <a href="#/ingestion">${esc(s.title)}</a><br><span class="muted small">${esc(s.error || "")}</span></p>`),
           ...(peopleRuns()[0]?.status === "failed" ? [`<p style="margin:4px 0">${badge("failed")} <a href="#/people/runs">people_dataset run failed</a><br><span class="muted small">${esc(peopleRuns()[0].error || "")}</span></p>`] : []),
           ...(D.people?.detector ? [`<p style="margin:4px 0">${badge("warn", "people")} <a href="#/people/anomalies">${fmtInt(D.people.detector.dummy.likely)} likely dummy rows, ${fmtInt(D.people.detector.duplicates.likely)} likely duplicate pairs, ${fmtInt(D.people.detector.unnamed?.people || 0)} people without a name</a></p>`] : []),
         ].join("") || `<p class="muted">Every source is registered and valid.</p>`}</div>
@@ -833,7 +847,7 @@
       <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Source tab</th><th>Label</th><th>Status</th><th class="num">Rows</th><th class="num">Excluded</th><th>Details</th></tr></thead><tbody>
         ${[...D.people.sources, ...(D.people.gold?.mentorship?.sources || []).map((s) => ({ ...s, label: `${s.program}_PAIRING`, status: s.status, rows: s.rows, excluded: null, error: s.error }))].map((s) => `<tr>
           <td>${icon("sheet")} ${s.spreadsheet_id ? `<a href="https://docs.google.com/spreadsheets/d/${esc(s.spreadsheet_id)}" target="_blank" rel="noopener">${esc(s.title)}</a>` : esc(s.title)}</td>
-          <td class="mono small">${esc(s.label)}</td><td>${badge(s.status === "read" ? "registered" : "unreachable", s.status)}</td><td class="num">${fmtInt(s.rows)}</td><td class="num">${s.excluded == null ? "–" : fmtInt(s.excluded)}</td>
+          <td class="mono small">${esc(s.label)}</td><td>${badge(s.status === "read" ? "registered" : s.status === "archived" ? "skipped" : "unreachable", s.status)}</td><td class="num">${fmtInt(s.rows)}</td><td class="num">${s.excluded == null ? "–" : fmtInt(s.excluded)}</td>
           <td class="small">${s.status === "read" ? `<a href="#/people/sources">columns used</a>` : esc(s.error || "")}</td></tr>`).join("")}
       </tbody></table></div>` : ""}
       <div class="grid grid-2">
@@ -1328,7 +1342,7 @@
   const ROLE_GROUP = Object.fromEntries(ROLE_GROUPS.flatMap((g) => g.roles.map((r) => [r, g])));
   const roleColor = (r) => ROLE_GROUP[r]?.color || "--c9";
   const TREE_VIEWS = [
-    ["role", "By role"], ["mgmt", "Management"], ["place", "Lives in"], ["origin", "Origin"], ["years", "Years with IM"], ["mentor", "Mentorship"],
+    ["role", "By role"], ["mgmt", "Management"], ["field", "Field of study"], ["years", "Years with IM"], ["mentor", "Mentorship"],
     ["event", "Events"], ["study", "Study country"], ["dups", "Possible duplicates"],
   ];
   const DUP_TYPES = {
@@ -1342,12 +1356,13 @@
     view: "role", q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0,
     mentored: false, yearFrom: "", yearTo: "", expanded: new Set(["root"]), caps: new Map(), selected: null,
     prev: new Map(), els: new Map(), auto: true, origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "",
+    field: "", univ: "", tsort: { key: "count", dir: -1 }, tpage: 1,
   };
   const NODE_W = 216, NODE_H = 40, COL = NODE_W + 64, ROW = 50, PAD = 24, CAP = 40;
   // Caption shown above a group label, so the label itself can be just the value ("Content Writer", not "Applied: Content W…").
   const KIND_CAPTION = { group: "Program", role: "Role", region: "Region", province: "Province", city: "City", country: "Country",
     division: "Division", position: "Position", applied: "Applied for", years: "Years with IM", year: "Year", event: "Event",
-    erole: "Event role", dtype: "Duplicate check", pair: "Possible pair" };
+    erole: "Event role", dtype: "Duplicate check", pair: "Possible pair", field: "Field of study", university: "University" };
   // Split a label over two lines at word boundaries; the second line is shortened only if it still does not fit.
   function wrapTwo(text, maxPx, size = 12, weight = 500) {
     const words = String(text).split(/\s+/);
@@ -1372,9 +1387,11 @@
         fy: r[f.first_year], ly: r[f.last_year], ev: r[f.events_attended], sp: r[f.events_spoken], mm: r[f.mentees_mentored], mh: r[f.mentors_had],
         bcity: r[f.birth_city], bprov: r[f.birth_province], bregion: r[f.birth_region], origin: r[f.origin_country],
         yrs: r[f.years_with_im] || 0, li: r[f.linkedin], prof: r[f.profile], emv: r[f.email_variants] || 1 };
-      Object.assign(p, { mpos: r[f.mgmt_position], mdiv: r[f.mgmt_division], mlevel: r[f.mgmt_level], mhist: r[f.mgmt_history], applied: r[f.applied_position] });
+      Object.assign(p, { mpos: r[f.mgmt_position], mdiv: r[f.mgmt_division], mlevel: r[f.mgmt_level], mhist: r[f.mgmt_history], applied: r[f.applied_position],
+        field: r[f.area_of_study], tuniv: r[f.target_university] });
       if (!p.name) { p.unnamed = true; p.email = r[f.email_hint] || ""; p.name = `No name · ${p.email || "email hidden"}`; } else p.name = niceName(p.name);
-      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, p.bcity, p.bprov, p.bregion, p.origin, p.mpos, p.mdiv, p.applied, ...p.roles.map(roleName)]
+      p.nk = normSearch(p.unnamed ? p.email : p.name);
+      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, p.tuniv, p.field, p.bcity, p.bprov, p.bregion, p.origin, p.mpos, p.mdiv, p.applied, ...p.roles.map(roleName)]
         .filter(Boolean).join(" · ").toLowerCase();
       return p;
     });
@@ -1402,6 +1419,33 @@
     return DIR;
   }
 
+  // Search ranking. An exact full name wins outright; then names starting with the query, the whole phrase at a word start,
+  // every word as the start of a name part, the phrase anywhere in the name, and only then other fields (city, campus…).
+  const normSearch = (t) => String(t || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9@.+ ]/g, " ").replace(/\s+/g, " ").trim();
+  function nameScore(p, qn, tokens) {
+    const nk = p.nk;
+    if (!qn) return 0;
+    if (nk === qn) return 100;
+    if (nk.startsWith(`${qn} `) || nk.startsWith(qn)) return 90;
+    if (` ${nk}`.includes(` ${qn}`)) return 80;
+    const words = nk.split(" ");
+    if (tokens.every((t) => words.some((w) => w.startsWith(t)))) return 60;
+    if (nk.includes(qn)) return 50;
+    if (tokens.every((t) => nk.includes(t))) return 30;
+    if (tokens.every((t) => p.hay.includes(t))) return 10;
+    return 0;
+  }
+  // Keep only the best tier: "Hani Ramadhan" shows that person, not everyone named Hani or Ramadhan.
+  function searchPeople(people, q) {
+    const qn = normSearch(q), tokens = qn.split(" ").filter(Boolean);
+    if (!tokens.length) return null;
+    const scored = people.map((p) => [p, nameScore(p, qn, tokens)]).filter(([, sc]) => sc > 0);
+    const best = Math.max(0, ...scored.map(([, sc]) => sc));
+    const floor = best >= 90 ? 90 : best >= 80 ? 80 : best >= 60 ? 60 : best >= 30 ? 30 : 1;
+    return new Map(scored.filter(([, sc]) => sc >= floor).map(([p, sc]) => [p.i, sc]));
+  }
+
   const placeOf = (p) => p.region ? p.region : p.country && p.country !== "Indonesia" ? "Abroad" : null;
   const originOf = (p) => p.bregion || (p.origin && p.origin !== "Indonesia" ? "Abroad" : "Not stated");
   const originSegs = (p) => {
@@ -1412,9 +1456,11 @@
   };
 
   function treeFilter(dir) {
-    const t = TREE, tokens = t.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const t = TREE, hits = t.q.trim() ? searchPeople(dir.people, t.q) : null;
     return dir.people.filter((p) => {
-      if (tokens.length && !tokens.every((w) => p.hay.includes(w))) return false;
+      if (hits && !hits.has(p.i)) return false;
+      if (t.field && p.field !== t.field) return false;
+      if (t.univ && p.inst !== t.univ && p.tuniv !== t.univ) return false;
       if (t.roles.size && !p.roles.some((r) => t.roles.has(r))) return false;
       if (t.regions.size && !t.regions.has(placeOf(p) || "Not stated")) return false;
       if (t.province && p.province !== t.province) return false;
@@ -1452,6 +1498,10 @@
     n.children.get(key).people.add(p.i);
     return n.children.get(key);
   }
+  const studySegs = (p) => [
+    { kind: "field", label: p.field || "Field not stated", color: p.field ? "--c3" : "--c9" },
+    { kind: "university", label: p.inst || p.tuniv || "University not stated", color: p.inst || p.tuniv ? "--c5" : "--c9" },
+  ];
   const locSegs = (p) => {
     const where = placeOf(p);
     if (!where) return [{ kind: "region", label: "Location not stated", color: "--c9" }];
@@ -1467,13 +1517,10 @@
     if (v === "role") {
       for (const p of people) for (const r of p.roles.filter(shown)) {
         const g = ROLE_GROUP[r];
-        addPath(root, [{ kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }, ...locSegs(p)], p);
+        addPath(root, [{ kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }, ...studySegs(p)], p);
       }
-    } else if (v === "place") {
-      for (const p of people) for (const r of p.roles.filter(shown)) {
-        const g = ROLE_GROUP[r];
-        addPath(root, [...locSegs(p), { kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }], p);
-      }
+    } else if (v === "field") {
+      for (const p of people) addPath(root, studySegs(p), p);
     } else if (v === "mgmt") {
       const LEVELS = ["Leadership", "Manager / lead", "Team member"];
       for (const p of people) {
@@ -1488,11 +1535,6 @@
         if (appliedOk && p.roles.includes("MANAGEMENT_CANDIDATE") && p.applied) {
           addPath(root, [{ kind: "group", label: "Applicants", color: "--c10" }, { kind: "applied", label: p.applied, color: "--c10" }], p);
         }
-      }
-    } else if (v === "origin") {
-      for (const p of people) for (const r of p.roles.filter(shown)) {
-        const g = ROLE_GROUP[r];
-        addPath(root, [...originSegs(p), { kind: "group", label: g.key, color: g.color }], p);
       }
     } else if (v === "years") {
       for (const p of people) for (const r of p.roles.filter(shown)) {
@@ -1626,7 +1668,7 @@
       const q = TREE.q.trim().toLowerCase();
       const hit = q && p.name.toLowerCase().includes(q);
       const sub = [TREE.view === "mgmt" || TREE.mpos || TREE.mdiv || TREE.mlevel ? (p.mpos || (p.applied ? `applied: ${p.applied}` : "")) : "",
-        p.city || p.province || (p.country && p.country !== "Indonesia" ? p.country : ""), p.yrs ? `${p.yrs} yr${p.yrs > 1 ? "s" : ""}` : "",
+        TREE.view === "role" || TREE.view === "field" ? "" : p.city || p.province || (p.country && p.country !== "Indonesia" ? p.country : ""), p.yrs ? `${p.yrs} yr${p.yrs > 1 ? "s" : ""}` : "",
         p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
       const dup = dir.dups.has(n.person);
       // Space for text: box width minus avatar, toggle, LinkedIn badge and duplicate dot.
@@ -1678,6 +1720,7 @@
         <div class="card tree-toolbar" id="tree-toolbar"></div>
         <div class="tree-stage card"><div class="tree-scroll" id="tree-scroll"><div id="ptree" role="tree" aria-label="People tree"></div></div>
           <aside class="tree-detail" id="tree-detail" hidden aria-live="polite"></aside></div>
+        <div class="card tree-table" id="tree-table" aria-live="polite"></div>
       </section></div>`;
   }
 
@@ -1694,6 +1737,9 @@
     const countries = [...new Set(dir.people.flatMap((p) => [p.study, p.target]).filter((c) => c && c !== "Indonesia"))].sort();
     const divisions = [...new Set(dir.people.map((p) => p.mdiv).filter(Boolean))].sort();
     const positionsFor = (div) => [...new Set(dir.people.filter((p) => !div || p.mdiv === div).flatMap((p) => [p.mpos, div ? null : p.applied]).filter(Boolean))].sort();
+    const countSort = (vals) => { const c = new Map(); vals.filter(Boolean).forEach((v) => c.set(v, (c.get(v) || 0) + 1)); return [...c.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([v]) => v); };
+    const fields = countSort(dir.people.map((p) => p.field));
+    const univsFor = (fld) => countSort(dir.people.filter((p) => !fld || p.field === fld).map((p) => p.inst || p.tuniv));
     const origins = [...new Set(dir.people.map(originOf))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
     const regions = [...new Set(dir.people.map((p) => placeOf(p) || "Not stated"))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
     let anim = null, layoutNow = null;
@@ -1714,9 +1760,9 @@
         <div class="tf-sec"><div class="tf-h">Lives in</div><div class="fchips">${regions.map((r) => chip(TREE.regions.has(r), "data-region", r, r)).join("")}</div>
           <label class="tf-field"><span>Province</span><select id="tf-prov"><option value="">Any province</option>${provs.map((v) => opt(v, TREE.province)).join("")}</select></label>
           <div class="seg">${[["any", "Anywhere"], ["id", "Indonesia"], ["abroad", "Abroad"]].map(([v, l]) => `<button type="button" data-lives="${v}" class="${TREE.lives === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
-        <div class="tf-sec"><div class="tf-h">Origin</div>
-          <label class="tf-field"><span>Born in</span><select id="tf-origin"><option value="">Anywhere</option>${origins.map((v) => opt(v, TREE.origin)).join("")}</select></label></div>
-        <div class="tf-sec"><div class="tf-h">Study</div><label class="tf-field"><span>Studied in or targets</span><select id="tf-country"><option value="">Any country</option>${countries.map((v) => opt(v, TREE.country)).join("")}</select></label></div>
+        <div class="tf-sec"><div class="tf-h">Study</div>
+          <label class="tf-field"><span>Field of study</span><select id="tf-field"><option value="">Any field</option>${fields.map((v) => opt(v, TREE.field)).join("")}</select></label>
+          <label class="tf-field"><span>University</span><select id="tf-univ"><option value="">Any university</option>${univsFor(TREE.field).map((v) => opt(v, TREE.univ)).join("")}</select></label><label class="tf-field"><span>Studied in or targets</span><select id="tf-country"><option value="">Any country</option>${countries.map((v) => opt(v, TREE.country)).join("")}</select></label></div>
         <div class="tf-sec"><div class="tf-h">Activity</div>
           <label class="tf-field"><span>Events attended</span><select id="tf-ev">${[[0, "Any"], [1, "1 or more"], [2, "2 or more"], [3, "3 or more"], [5, "5 or more"]].map(([v, l]) => opt(v, TREE.minEvents, l)).join("")}</select></label>
           <label class="tf-field"><span>Years with IM</span><select id="tf-years">${[[0, "Any"], [2, "2 or more"], [3, "3 or more"], [5, "5 or more"]].map(([v, l]) => opt(v, TREE.minYears, l)).join("")}</select></label>
@@ -1727,7 +1773,7 @@
           <label class="tf-field"><span>to</span><select id="tf-to"><option value="">Any</option>${years.map((y) => opt(y, TREE.yearTo)).join("")}</select></label></div></div>
         <button type="button" class="btn btn-sm tf-reset" id="tf-reset">Reset filters</button>`;
       const f = $("#tree-filters");
-      const changed = () => { TREE.auto = true; render(); drawFilters(); };
+      const changed = () => { TREE.auto = true; TREE.tpage = 1; render(); drawFilters(); };
       $$("[data-role]", f).forEach((b) => b.addEventListener("click", () => { const r = b.dataset.role; TREE.roles.has(r) ? TREE.roles.delete(r) : TREE.roles.add(r); changed(); }));
       $$("[data-region]", f).forEach((b) => b.addEventListener("click", () => { const r = b.dataset.region; TREE.regions.has(r) ? TREE.regions.delete(r) : TREE.regions.add(r); TREE.province = ""; changed(); }));
       $$("[data-lives]", f).forEach((b) => b.addEventListener("click", () => { TREE.lives = b.dataset.lives; changed(); }));
@@ -1735,7 +1781,8 @@
       $("#tf-country").addEventListener("change", (e) => { TREE.country = e.target.value; changed(); });
       $("#tf-ev").addEventListener("change", (e) => { TREE.minEvents = +e.target.value; changed(); });
       $("#tf-mentored").addEventListener("change", (e) => { TREE.mentored = e.target.checked; changed(); });
-      $("#tf-origin").addEventListener("change", (e) => { TREE.origin = e.target.value; changed(); });
+      $("#tf-field").addEventListener("change", (e) => { TREE.field = e.target.value; TREE.univ = ""; changed(); });
+      $("#tf-univ").addEventListener("change", (e) => { TREE.univ = e.target.value; changed(); });
       $("#tf-mdiv").addEventListener("change", (e) => { TREE.mdiv = e.target.value; TREE.mpos = ""; changed(); });
       $("#tf-mpos").addEventListener("change", (e) => { TREE.mpos = e.target.value; changed(); });
       $$("[data-mlevel]", f).forEach((b) => b.addEventListener("click", () => { TREE.mlevel = TREE.mlevel === b.dataset.mlevel ? "" : b.dataset.mlevel; changed(); }));
@@ -1746,7 +1793,7 @@
       $("#tf-to").addEventListener("change", (e) => { TREE.yearTo = e.target.value; changed(); });
       $("#tf-reset").addEventListener("click", () => {
         Object.assign(TREE, { q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "",
-          origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "" });
+          origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "", field: "", univ: "" });
         TREE.expanded = new Set(["root"]); TREE.selected = null;
         const box = $("#tree-detail"); box.classList.remove("open"); box.hidden = true;
         changed();
@@ -1761,7 +1808,8 @@
       const box = $("#tf-hits");
       if (!box) return;
       if (!TREE.q.trim()) { box.innerHTML = ""; return; }
-      const hits = treeFilter(dir).slice(0, 6);
+      const ranked = searchPeople(dir.people, TREE.q);
+      const hits = treeFilter(dir).sort((a, b) => (ranked?.get(b.i) || 0) - (ranked?.get(a.i) || 0) || a.name.localeCompare(b.name)).slice(0, 6);
       box.innerHTML = hits.length ? hits.map((p) => `<button type="button" data-hit="${p.i}"><span class="ini" style="background:var(${p.unnamed ? "--c9" : roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
         <span><b>${esc(p.unnamed ? p.email : p.name)}</b>${p.unnamed ? `<small>No name</small>` : ""}<small>${esc([p.roles.slice(0, 2).map(roleName).join(", ") + (p.roles.length > 2 ? ` +${p.roles.length - 2}` : ""), p.city || p.province || p.country].filter(Boolean).join(" · "))}</small></span></button>`).join("")
         : `<p class="muted small">No one matches.</p>`;
@@ -1771,9 +1819,9 @@
     const drawToolbar = (count, total) => {
       const active = [TREE.q && `“${TREE.q}”`, ...[...TREE.roles].map(roleName), ...TREE.regions, TREE.province, TREE.lives !== "any" && (TREE.lives === "id" ? "In Indonesia" : "Abroad"),
         TREE.country, TREE.minEvents && `${TREE.minEvents}+ events`, TREE.mentored && "Mentored someone",
-        TREE.origin && `Born in ${TREE.origin}`, TREE.mlevel, TREE.mdiv, TREE.mpos, TREE.minYears && `${TREE.minYears}+ years with IM`, TREE.linked && "Has a link", TREE.dupOnly && "Possible duplicates", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
+        TREE.field, TREE.univ, TREE.mlevel, TREE.mdiv, TREE.mpos, TREE.minYears && `${TREE.minYears}+ years with IM`, TREE.linked && "Has a link", TREE.dupOnly && "Possible duplicates", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
       $("#tree-toolbar").innerHTML = `<div class="seg views">${TREE_VIEWS.map(([v, l]) => `<button type="button" data-view="${v}" class="${TREE.view === v ? "on" : ""}">${l}</button>`).join("")}</div>
-        <div class="tt-meta"><b>${fmtInt(count)}</b> <span class="muted">of ${fmtInt(total)} people</span>${active.length ? `<span class="tt-chips">${active.map((a) => `<span>${esc(a)}</span>`).join("")}</span>` : ""}</div>
+        <div class="tt-meta"><b>${fmtInt(count)}</b> <span class="muted">of ${fmtInt(total)} people</span>${TREE.view === "role" && count <= 20 && TREE.q.trim() ? `<span class="muted small">· shown once under each role they hold</span>` : ""}${active.length ? `<span class="tt-chips">${active.map((a) => `<span>${esc(a)}</span>`).join("")}</span>` : ""}</div>
         <div class="tt-actions"><button type="button" class="btn btn-sm" data-act="collapse">Collapse</button><button type="button" class="btn btn-sm" data-act="level">Expand a level</button></div>`;
       $$("[data-view]", $("#tree-toolbar")).forEach((b) => b.addEventListener("click", () => { TREE.view = b.dataset.view; TREE.expanded = new Set(["root"]); TREE.caps = new Map(); TREE.auto = true; render(); }));
       $("[data-act=collapse]").addEventListener("click", () => { TREE.expanded = new Set(["root"]); TREE.auto = false; render(); });
@@ -1791,7 +1839,7 @@
       if (!TREE.auto) return;
       TREE.auto = false;
       const filtered = TREE.q.trim() || TREE.roles.size || TREE.regions.size || TREE.province || TREE.lives !== "any" || TREE.country || TREE.minEvents || TREE.mentored || TREE.yearFrom || TREE.yearTo
-        || TREE.origin || TREE.minYears || TREE.linked || TREE.dupOnly || TREE.view === "dups" || TREE.mdiv || TREE.mpos || TREE.mlevel;
+        || TREE.minYears || TREE.linked || TREE.dupOnly || TREE.view === "dups" || TREE.mdiv || TREE.mpos || TREE.mlevel || TREE.field || TREE.univ;
       const limit = filtered && count <= 60 ? 99 : filtered && count <= 400 ? 3 : 1;
       const walk = (n, depth) => { if (depth < limit && n.children.size) { TREE.expanded.add(n.key); n.children.forEach((c) => c.kind !== "person" && walk(c, depth + 1)); } };
       walk(root, 0);
@@ -1819,6 +1867,7 @@
       }
       layoutNow = lay;
       drawToolbar(people.length, dir.people.length);
+      drawTable(lay);
       svg.setAttribute("width", lay.width); svg.setAttribute("height", lay.height);
       svg.setAttribute("viewBox", `0 0 ${lay.width} ${lay.height}`);
       animateTo(lay);
@@ -1891,6 +1940,88 @@
       anim = { raf: requestAnimationFrame(frame) };
     };
 
+    // Table of the last level shown: the deepest open level. Groups list their path and people; people list their details
+    // (all people under the open branches, not only the 40 drawn per branch).
+    const drawTable = (lay) => {
+      const box = $("#tree-table");
+      if (!box) return;
+      const items = lay.nodes.filter((it) => it.n.kind !== "more" && it.n.kind !== "root");
+      if (!items.length) { box.innerHTML = `<p class="muted small" style="margin:0">Open a branch to see its rows here.</p>`; return; }
+      const depth = Math.max(...items.map((it) => it.depth));
+      const atDepth = items.filter((it) => it.depth === depth);
+      const pathOf = (it) => { const out = []; let x = it.parent; while (x && x.n.kind !== "root") { out.unshift(x.n.label); x = x.parent; } return out; };
+      const sortBy = (rows, cols) => {
+        const c = cols.find((k) => k.key === TREE.tsort.key) || cols[0];
+        return rows.sort((a, b) => { const va = c.val(a), vb = c.val(b); return (typeof va === "number" && typeof vb === "number" ? va - vb : String(va ?? "").localeCompare(String(vb ?? ""))) * TREE.tsort.dir; });
+      };
+      const PAGE = 50;
+      let cols, rows, title;
+      if (atDepth.some((it) => it.n.kind === "person")) {
+        // Every person under the parents of the deepest level, deduplicated.
+        const seen = new Map();
+        for (const it of atDepth) {
+          const parent = it.parent;
+          const kids = parent ? [...parent.n.children.values()].filter((c) => c.kind === "person") : [it.n];
+          for (const k of kids) if (!seen.has(k.person)) seen.set(k.person, parent ? pathOf({ parent: parent, n: parent.n }).concat(parent.n.kind !== "root" ? [parent.n.label] : []) : []);
+        }
+        rows = [...seen.entries()].map(([i, path]) => ({ p: dir.people[i], path }));
+        title = `People · ${fmtInt(rows.length)}`;
+        cols = [
+          { key: "name", label: "Name", val: (r) => r.p.unnamed ? r.p.email : r.p.name },
+          { key: "roles", label: "Roles", val: (r) => r.p.roles.map(roleName).join(", ") },
+          { key: "field", label: "Field of study", val: (r) => r.p.field || "" },
+          { key: "univ", label: "University", val: (r) => r.p.inst || r.p.tuniv || "" },
+          { key: "position", label: "Position", val: (r) => r.p.mpos || "" },
+          { key: "city", label: "Lives in", val: (r) => r.p.city || r.p.province || (r.p.country !== "Indonesia" ? r.p.country : "") || "" },
+          { key: "yrs", label: "Years with IM", val: (r) => r.p.yrs || 0, num: true },
+          { key: "ev", label: "Events", val: (r) => r.p.ev || 0, num: true },
+          { key: "mm", label: "Mentees", val: (r) => r.p.mm || 0, num: true },
+        ];
+        if (!cols.some((c) => c.key === TREE.tsort.key)) TREE.tsort = { key: "name", dir: 1 };
+      } else {
+        rows = atDepth.map((it) => ({ it, path: pathOf(it) }));
+        const cap = KIND_CAPTION[atDepth[0].n.kind] || "Group";
+        title = `${cap} · ${fmtInt(rows.length)}`;
+        cols = [
+          { key: "label", label: cap, val: (r) => r.it.n.label },
+          { key: "path", label: "Under", val: (r) => r.path.join(" › ") },
+          { key: "count", label: "People", val: (r) => r.it.n.people.size, num: true },
+        ];
+        if (!cols.some((c) => c.key === TREE.tsort.key)) TREE.tsort = { key: "count", dir: -1 };
+      }
+      sortBy(rows, cols);
+      const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+      TREE.tpage = Math.min(TREE.tpage, pages);
+      const slice = rows.slice((TREE.tpage - 1) * PAGE, TREE.tpage * PAGE);
+      const arrow = (k) => (TREE.tsort.key === k ? (TREE.tsort.dir > 0 ? " ▲" : " ▼") : "");
+      box.innerHTML = `<div class="tt-head"><h3>Last level shown · ${esc(title)}</h3>
+          <span class="muted small">${rows[0]?.p ? "Click a name to open the person." : "Click a row to open that branch."} Click a column to sort.</span></div>
+        <div class="table-wrap"><table class="tree-tbl"><thead><tr>${cols.map((c) => `<th class="${c.num ? "num" : ""}"><button type="button" class="th-sort" data-sort="${c.key}">${esc(c.label)}${arrow(c.key)}</button></th>`).join("")}</tr></thead><tbody>
+        ${slice.map((r, i) => r.p
+          ? `<tr data-person="${r.p.i}" tabindex="0"><td><span class="ini sm" style="background:var(${r.p.unnamed ? "--c9" : roleColor(r.p.roles[0])})">${esc(initials(r.p.name))}</span> <span class="${r.p.unnamed ? "mono small" : ""}">${esc(r.p.unnamed ? r.p.email : r.p.name)}</span></td>
+              ${cols.slice(1).map((c) => `<td class="${c.num ? "num" : "small"}">${c.num ? fmtInt(c.val(r)) : esc(c.val(r) || "–")}</td>`).join("")}</tr>`
+          : `<tr data-key="${esc(r.it.n.key)}" tabindex="0"><td><span class="tt-dot" style="background:var(${r.it.n.color})"></span> ${esc(r.it.n.label)}</td><td class="small muted">${esc(r.path.join(" › ") || "–")}</td><td class="num">${fmtInt(r.it.n.people.size)}</td></tr>`).join("")}
+        </tbody></table></div>
+        ${pages > 1 ? `<div class="tt-pager"><button type="button" class="btn btn-sm" data-page="-1" ${TREE.tpage <= 1 ? "disabled" : ""}>Previous</button>
+          <span class="muted small">Page ${TREE.tpage} of ${pages} · rows ${fmtInt((TREE.tpage - 1) * PAGE + 1)}–${fmtInt(Math.min(rows.length, TREE.tpage * PAGE))} of ${fmtInt(rows.length)}</span>
+          <button type="button" class="btn btn-sm" data-page="1" ${TREE.tpage >= pages ? "disabled" : ""}>Next</button></div>` : ""}`;
+      $$("[data-sort]", box).forEach((b) => b.addEventListener("click", () => {
+        TREE.tsort = TREE.tsort.key === b.dataset.sort ? { key: b.dataset.sort, dir: -TREE.tsort.dir } : { key: b.dataset.sort, dir: cols.find((c) => c.key === b.dataset.sort)?.num ? -1 : 1 };
+        TREE.tpage = 1; drawTable(lay);
+      }));
+      $$("[data-page]", box).forEach((b) => b.addEventListener("click", () => { TREE.tpage += +b.dataset.page; drawTable(lay); }));
+      $$("tr[data-person]", box).forEach((tr) => {
+        const open = () => reveal(+tr.dataset.person);
+        tr.addEventListener("click", open);
+        tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+      });
+      $$("tr[data-key]", box).forEach((tr) => {
+        const open = () => { TREE.expanded.add(tr.dataset.key); TREE.auto = false; render(); };
+        tr.addEventListener("click", open);
+        tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+      });
+    };
+
     const toggle = (g) => {
       const it = g._it;
       if (!it) return;
@@ -1915,7 +2046,7 @@
     const reveal = (pi) => {
       const p = dir.people[pi];
       TREE.q = ""; const q = $("#tf-q"); if (q) q.value = "";
-      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "", origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "" });
+      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "", origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "", field: "", univ: "" });
       if (TREE.view === "mgmt" && !(p.mpos || p.mdiv || p.applied)) TREE.view = "role";
       if (TREE.view === "dups" && !dir.dups.has(pi)) TREE.view = "role";
       if (TREE.view === "mentor" && !dir.mentees.has(pi) && !dir.mentors.has(pi)) TREE.view = "role";
@@ -1981,6 +2112,62 @@
     if (want != null && dir.people[+want]) setTimeout(() => reveal(+want), 50);
   }
 
+  // ---------- archive / restore a people source ----------
+  // Runs .github/workflows/people-sources.yml, which commits config/people_sources_state.yml (who, when, why) and
+  // rebuilds people gold. With a GitHub token in this tab it starts directly; otherwise GitHub opens with the key copied.
+  function sourceManager(key, title, archived) {
+    const token = store.get("im_gh_token");
+    return `<div class="src-mgr" data-src="${esc(key)}" data-title="${esc(title)}">
+      <div class="tf-h">${archived ? "Archived source" : "Manage source"}</div>
+      ${archived ? `<p class="small">Archived ${esc(archived.at ? when(archived.at) : "")} by <b>${esc(archived.by || "?")}</b>: ${esc(archived.reason || "")}</p>
+        <p class="muted small">Not read, so it is left out of people gold, the tree, every count and the lineage. Restoring reads it again on the next run.</p>
+        <button type="button" class="btn btn-sm btn-primary" data-src-act="restore">Restore source</button>`
+      : `<p class="muted small">Archiving stops reading this source: people gold, the tree, every count and the lineage are rebuilt without it. It can be restored at any time.</p>
+        <label class="tf-field"><span>Reason (kept in the history)</span><input type="text" class="src-reason" maxlength="200" placeholder="e.g. replaced by the 2025 consolidated sheet"></label>
+        <button type="button" class="btn btn-sm src-archive" data-src-act="archive">Archive source</button>`}
+      <p class="muted small src-how">${token ? "Starts the change in GitHub Actions with your token." : `No GitHub token in this tab: GitHub opens with the key copied. <button type="button" class="linkish" data-src-token>Add a token</button> to do it in one click.`}</p>
+      <div class="src-token" hidden><input type="password" class="src-token-in" placeholder="github_pat_… (Actions: Read and write, this repository)" autocomplete="off"><button type="button" class="btn btn-sm" data-src-token-save>Save</button></div>
+      <div class="src-status small" aria-live="polite"></div></div>`;
+  }
+  function wireSourceManager(root) {
+    $$(".src-mgr", root).forEach((box) => {
+      const key = box.dataset.src, status = $(".src-status", box);
+      $$("[data-src-act]", box).forEach((b) => b.addEventListener("click", async () => {
+        const action = b.dataset.srcAct, reason = $(".src-reason", box)?.value.trim() || "";
+        if (action === "archive" && !confirm(`Archive “${box.dataset.title}”?\n\nIt will not be read on the next run, and people gold, the tree, counts and lineage are rebuilt without it. You can restore it later.`)) return;
+        b.disabled = true;
+        status.textContent = "Starting…";
+        status.textContent = await manageSource(action, key, reason);
+        b.disabled = false;
+      }));
+      $("[data-src-token]", box)?.addEventListener("click", () => ($(".src-token", box).hidden = false));
+      $("[data-src-token-save]", box)?.addEventListener("click", () => {
+        const v = $(".src-token-in", box).value.trim();
+        if (v) { store.set("im_gh_token", v); $(".src-how", box).textContent = "Token saved for this tab."; $(".src-token", box).hidden = true; }
+      });
+    });
+  }
+  async function manageSource(action, key, reason) {
+    const repo = D.jobs.workflow.repository, file = "people-sources.yml", token = store.get("im_gh_token");
+    const page = `https://github.com/${repo}/actions/workflows/${file}`;
+    if (!token) {
+      try { await navigator.clipboard.writeText(key); } catch { /* the key is shown below */ }
+      window.open(page, "_blank", "noopener");
+      return `GitHub opened: click “Run workflow”, choose “${action}”, paste the source key “${key}”${reason ? " and the reason" : ""}, then Run.`;
+    }
+    try {
+      const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${file}/dispatches`, {
+        method: "POST", headers: { ...ghHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: "main", inputs: { action, source: key, reason } }),
+      });
+      if (res.status === 204) return `Requested: ${action} “${key}”. GitHub commits the change and rebuilds people gold (about 6–8 minutes); a “New data published” banner appears when it is live.`;
+      if (res.status === 401 || res.status === 403) return "GitHub refused the token (it needs Actions: Read and write on this repository).";
+      return `GitHub answered ${res.status}. Try again, or run the workflow on GitHub.`;
+    } catch {
+      return "Could not reach GitHub. Check your connection.";
+    }
+  }
+
   // ---------- people lineage ----------
   // Layered left-to-right DAG: sources -> tables -> outputs. Edges that skip columns get waypoints in the
   // columns they cross (Sugiyama style), so lines run in empty lanes; every bend is a right angle.
@@ -1998,7 +2185,7 @@
           <input id="lin-q" type="search" placeholder="Find a sheet, table or page…" aria-label="Find in lineage" autocomplete="off"></div>
         <label class="tf-field lin-col"><span>Trace a gold column</span><select id="lin-col"><option value="">Choose a column…</option>
           ${Object.keys(L.columns).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}</select></label>
-        <label class="tf-check"><input type="checkbox" id="lin-off"> Hide sources not read</label>
+        <label class="tf-check"><input type="checkbox" id="lin-off"> Hide sources not read or archived</label>
         <button type="button" class="btn btn-sm" id="lin-reset">Clear</button>
         <div class="seg lin-zoom" role="group" aria-label="Zoom"><button type="button" data-zoom="-" aria-label="Zoom out">−</button><button type="button" data-zoom="fit">Fit</button><button type="button" data-zoom="+" aria-label="Zoom in">+</button></div>
         <span class="muted small lin-hint">Click any box to trace what feeds it and what it feeds.</span></div>
@@ -2073,7 +2260,7 @@
           <rect class="ln-box" width="${NW}" height="${NH}" rx="${n.kind === "output" ? 20 : 8}"/>
           <rect class="ln-accent" x="7" y="7" width="4" height="${NH - 14}" rx="2" fill="var(${LIN_COLOR(n)})"/>
           <title>${esc(n.label)}${fmtC(n) ? ` · ${esc(fmtC(n))}` : ""}</title>
-          <text class="ln-kind" x="18" y="14">${esc(fitText(((n.kind === "source" ? (n.label.includes(" · ") ? n.label.split(" · ")[0] : "Sheet") : (LIN_KIND[n.kind] || n.kind)) + (n.status === "unreachable" ? " · not read" : n.status === "off" ? " · off" : "")).toUpperCase(), NW - 18 - 10, 9.5, 400, 0.5))}</text>
+          <text class="ln-kind" x="18" y="14">${esc(fitText(((n.kind === "source" ? (n.label.includes(" · ") ? n.label.split(" · ")[0] : "Sheet") : (LIN_KIND[n.kind] || n.kind)) + (n.status === "unreachable" ? " · not read" : n.status === "archived" ? " · archived" : n.status === "off" ? " · off" : "")).toUpperCase(), NW - 18 - 10, 9.5, 400, 0.5))}</text>
           <text class="ln-label" x="18" y="29">${esc(fitText(n.kind === "source" && n.label.includes(" · ") ? n.label.split(" · ").slice(1).join(" · ") : n.label, NW - 18 - 10 - (n.count != null ? textWidth(fmtInt(n.count), 11.5, 600) + 10 : 0), 12.5, 600))}</text>
           ${fmtC(n) ? `<text class="ln-count" x="${NW - 10}" y="29" text-anchor="end">${esc(fmtInt(n.count))}</text>` : ""}</g>`).join("")}</g></svg>`;
 
@@ -2102,7 +2289,8 @@
       const openPanel = (html) => { panel.innerHTML = html; panel.hidden = false; requestAnimationFrame(() => panel.classList.add("open"));
         $("#lin-close", panel)?.addEventListener("click", () => { LIN.sel = null; LIN.col = ""; $("#lin-col").value = ""; panel.classList.remove("open"); setTimeout(() => (panel.hidden = true), 200); highlight(null); });
         $$("[data-node]", panel).forEach((b) => b.addEventListener("click", () => selectNode(b.dataset.node, true)));
-        $$("[data-col]", panel).forEach((b) => b.addEventListener("click", () => selectColumn(b.dataset.col))); };
+        $$("[data-col]", panel).forEach((b) => b.addEventListener("click", () => selectColumn(b.dataset.col)));
+        wireSourceManager(panel); };
       const inE = (id) => edges.filter((e) => e.to === id), outE = (id) => edges.filter((e) => e.from === id);
       const nodeLink = (id) => { const n = L.nodes.find((x) => x.id === id); return n ? `<button type="button" class="linkish" data-node="${esc(id)}">${esc(n.label)}</button>` : esc(id); };
       const scrollTo = (id) => {
@@ -2124,6 +2312,7 @@
             <button type="button" class="icon-btn" id="lin-close" aria-label="Close">✕</button></header>
           <p class="small">${esc(n.desc || "")}</p>
           ${n.url ? `<p><a class="lbtn" href="${esc(n.url)}" target="_blank" rel="noopener noreferrer">${icon("ext", 11)} Open</a></p>` : ""}
+          ${n.kind === "source" && n.key ? sourceManager(n.key, n.label, n.archived) : ""}
           ${inE(id).length ? `<div class="tf-h">Comes from</div><ul class="lin-list">${inE(id).map((e) => `<li>${nodeLink(e.from)}${e.count != null ? ` <span class="muted small">${fmtInt(e.count)}</span>` : ""}</li>`).join("")}</ul>` : ""}
           ${outE(id).length ? `<div class="tf-h">Feeds</div><ul class="lin-list">${outE(id).map((e) => `<li>${nodeLink(e.to)}${e.count != null ? ` <span class="muted small">${fmtInt(e.count)}</span>` : ""}</li>`).join("")}</ul>` : ""}
           ${cols.length ? `<div class="tf-h">${n.kind === "source" ? "Columns used" : "Columns"}</div><ul class="lin-list cols">${cols.map(([k, v]) => n.kind === "source"
@@ -2342,16 +2531,29 @@
   }
 
   function peopleSources(P) {
-    const st = (s) => (s === "read" ? "ok" : s === "unreachable" ? "unreachable" : "warn");
-    return `
-      <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Source</th><th>Label</th><th>Status</th><th class="num">Rows</th><th class="num">Excluded</th><th>Columns used</th></tr></thead><tbody>
-      ${P.sources.map((s) => `<tr><td>${icon("sheet")} <a href="https://docs.google.com/spreadsheets/d/${esc(s.spreadsheet_id)}" target="_blank" rel="noopener">${esc(s.title)}</a><div class="muted small mono">${esc(s.key)}</div></td>
-        <td class="mono small">${esc(s.label)}</td><td>${badge(st(s.status), s.status)}${s.error ? `<div class="muted small" style="max-width:280px">${esc(s.error)}</div>` : ""}</td>
-        <td class="num">${fmtInt(s.rows)}</td><td class="num">${fmtInt(s.excluded)}</td>
-        <td class="small">${Object.entries(s.mapped_columns || {}).filter(([, v]) => v).map(([k, v]) => `<span class="nowrap"><code>${esc(k)}</code> ← ${esc(v)}</span>`).join(", ")}${(s.dummy_columns || []).length ? `<div style="color:var(--warning)">Dummy columns ignored: ${s.dummy_columns.map(esc).join(", ")}</div>` : ""}</td></tr>`).join("")}
+    const st = (s) => (s === "read" ? "ok" : s === "unreachable" ? "unreachable" : s === "archived" ? "skipped" : "warn");
+    const pairs = (P.gold?.mentorship?.sources || []).map((s) => ({ ...s, label: `${s.program}_PAIRING`, pairing: true }));
+    const rows = [...P.sources, ...pairs];
+    const nArch = rows.filter((s) => s.status === "archived").length;
+    setTimeout(() => {
+      $$("[data-manage]").forEach((b) => b.addEventListener("click", () => {
+        const tr = $(`#mgr-${CSS.escape(b.dataset.manage)}`);
+        tr.hidden = !tr.hidden;
+        if (!tr.hidden && !tr.dataset.wired) { wireSourceManager(tr); tr.dataset.wired = "1"; }
+      }));
+    }, 0);
+    return `<div class="callout"><b>${rows.length - nArch} active, ${nArch} archived.</b> Archiving a source stops reading it: people gold, the tree, every count and the lineage are rebuilt without it on the next run. Every change is committed to <code>config/people_sources_state.yml</code> (who, when, why) and can be restored.</div>
+      <div class="table-wrap" style="margin-bottom:16px"><table><thead><tr><th>Source</th><th>Label</th><th>Status</th><th class="num">Rows</th><th class="num">Excluded</th><th>Columns used</th><th>Manage</th></tr></thead><tbody>
+      ${rows.map((s) => `<tr class="${s.status === "archived" ? "row-archived" : ""}"><td>${icon("sheet")} <a href="https://docs.google.com/spreadsheets/d/${esc(s.spreadsheet_id)}" target="_blank" rel="noopener">${esc(s.title)}</a><div class="muted small mono">${esc(s.key)}</div></td>
+        <td class="mono small">${esc(s.label)}</td><td>${badge(st(s.status), s.status)}${s.error ? `<div class="muted small" style="max-width:280px">${esc(s.error)}</div>` : ""}
+          ${s.archived ? `<div class="muted small">${esc(when(s.archived.at))} by ${esc(s.archived.by)}<br>${esc(s.archived.reason)}</div>` : ""}</td>
+        <td class="num">${fmtInt(s.rows)}</td><td class="num">${s.excluded == null ? "–" : fmtInt(s.excluded)}</td>
+        <td class="small">${s.pairing ? `${fmtInt(s.links || 0)} pairs linked` : Object.entries(s.mapped_columns || {}).filter(([, v]) => v).map(([k, v]) => `<span class="nowrap"><code>${esc(k)}</code> ← ${esc(v)}</span>`).join(", ")}${(s.dummy_columns || []).length ? `<div style="color:var(--warning)">Dummy columns ignored: ${s.dummy_columns.map(esc).join(", ")}</div>` : ""}</td>
+        <td><button type="button" class="btn btn-sm" data-manage="${esc(s.key)}">${s.status === "archived" ? "Restore…" : "Archive…"}</button></td></tr>
+        <tr id="mgr-${esc(s.key)}" hidden><td colspan="7">${sourceManager(s.key, s.title, s.archived)}</td></tr>`).join("")}
       </tbody></table></div>
       <div class="card"><h3>Looked at, not used</h3><ul class="list-plain">${(P.not_used || []).map((n) => `<li><b>${esc(n.title)}</b>: <span class="muted">${esc(n.reason)}</span></li>`).join("")}</ul>
-        <p class="muted small" style="margin:8px 0 0">Sources and their column names are in <code>config/people.yml</code>. A sheet the service account can't open shows as <b>unreachable</b>.</p></div>`;
+        <p class="muted small" style="margin:8px 0 0">Sources and their column names are in <code>config/people.yml</code>. A sheet the service account can't open shows as <b>unreachable</b>. New sources follow <code>docs/DATA_SOURCE_RULES.md</code>.</p></div>`;
   }
 
   function peopleRunsView(P, runId) { return peopleRunsPage(P, runId); }
