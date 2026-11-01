@@ -254,7 +254,11 @@ def test_directory_has_names_but_no_contact_details(gold_run, tmp_path):
     assert any(p[0] == "Dimas Wijaya" for p in d["people"])
     blob = json.dumps(d)
     import re
-    assert not re.search(r"[a-z0-9._%+-]{2,}@[a-z0-9-]+\.[a-z]", blob), "only masked emails (t***@domain) may appear"
+    # Full emails only as the label of people with no name (their only identifier); masked elsewhere.
+    fi = d["fields"].index("email_hint")
+    allowed = {p[fi] for p in d["people"] if not p[0] and p[fi]}
+    found = set(re.findall(r"[a-z0-9._%+-]{2,}@[a-z0-9-]+(?:\.[a-z0-9-]+)+", blob))
+    assert found <= allowed and allowed == {"mgmt.only.one@gmail.com", "mgmt.only.two@gmail.com", "mgmt.only.three@yahoo.com"}
     for leaked in ("+62", "IMP-", "14/7/1996"):
         assert leaked not in blob
     people = [dict(zip(d["fields"], p)) for p in d["people"]]
@@ -377,3 +381,22 @@ def test_gold_names_are_never_all_caps_or_all_lowercase(gold_run):
             letters = [c for c in w if c.isalpha()]
             if len(letters) > 1 and w.lower() not in P.NAME_PARTICLES:
                 assert not all(c.isupper() for c in letters) and not all(c.islower() for c in letters), n
+
+
+@pytest.mark.parametrize("raw, shown, level", [
+    ("head of data", "Head of Data", "Leadership"), ("CEO", "CEO", "Leadership"), ("data engineer", "Data Engineer", "Team member"),
+    ("Coordinator", "Coordinator", "Manager / lead"), ("ui/ux designer", "UI/UX Designer", "Team member"),
+    ("vice president of innovation and technology", "Vice President of Innovation and Technology", "Leadership"),
+])
+def test_position_titles_and_levels(raw, shown, level):
+    import people_gold as G
+    assert G.title_case(raw) == shown and G.position_level(shown) == level
+
+
+def test_management_positions_and_history(gold_run):
+    con, _, _ = gold_run
+    row = con.execute("SELECT mgmt_position, mgmt_division, mgmt_level, mgmt_history FROM gold_people WHERE full_name = 'Budi Santoso'").fetchone()
+    assert row[:3] == ("Chief Data Officer", "Data", "Leadership")
+    assert "2023: Head of Data, Data" in row[3]
+    applied = dict(con.execute("SELECT full_name, applied_position FROM gold_people WHERE applied_position IS NOT NULL").fetchall())
+    assert applied["Intan Kusuma"] == "Mentorship Coordinator"

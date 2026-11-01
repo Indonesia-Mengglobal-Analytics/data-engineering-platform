@@ -131,6 +131,38 @@ def web_url(raw) -> str | None:
     return s if re.match(r"https?://[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(/\S*)?$", s, re.I) else None
 
 
+TITLE_UPPER = {"ceo", "coo", "cfo", "cto", "cmo", "cpo", "vp", "hr", "it", "pr", "ui", "ux", "ui/ux", "nz", "uk", "usa", "us", "im",
+               "seo", "kol", "phd", "ai", "ml", "bd", "qa", "pic"}
+TITLE_LOWER = {"of", "and", "for", "the", "in", "to", "at", "on", "dan", "&"}
+LEADERSHIP = re.compile(r"\b(president|vice president|vp|director|co-director|head|chief|lead editor|editor in chief|ceo|coo|cfo|cto|cmo|"
+                        r"chair|ketua|kepala|founder)\b", re.I)
+MANAGER = re.compile(r"\b(manager|lead|leader|coordinator|koordinator|supervisor|senior)\b", re.I)
+
+
+def title_case(raw) -> str | None:
+    """Position and division titles: 'head of data' -> 'Head of Data', 'ceo' -> 'CEO'; mixed case kept."""
+    s = clean_label(raw)
+    if not s:
+        return None
+    if any(c.isupper() for c in s) and any(c.islower() for c in s):
+        return s
+    out = []
+    for i, w in enumerate(s.lower().split()):
+        if w in TITLE_UPPER or (w.strip("()") in TITLE_UPPER):
+            out.append(w.upper())
+        elif i and w in TITLE_LOWER:
+            out.append(w)
+        else:
+            out.append(re.sub(r"(^|[-/(])([a-z])", lambda m: m.group(1) + m.group(2).upper(), w))
+    return " ".join(out)
+
+
+def position_level(position: str | None) -> str | None:
+    if not position:
+        return None
+    return "Leadership" if LEADERSHIP.search(position) else "Manager / lead" if MANAGER.search(position) else "Team member"
+
+
 def clean_label(raw) -> str | None:
     """Tidy free text for display and grouping (institutions, areas of study)."""
     if raw is None:
@@ -311,12 +343,27 @@ def build(records: list[P.Record], result: dict, mentorships: list[dict], places
         institution = clean_label(a("doctoral_institution") or a("master_institution") or a("institution") or a("bachelor_institution"))
         labels = set(p["labels"])
         ev = attended.get(pid, {})
+        # Management: positions held (member records) by year, newest first; and the position applied for.
+        held = sorted(((r.year or 0, r.sheet_row, title_case(r.attrs.get("mgmt_position")), title_case(r.attrs.get("mgmt_division")))
+                       for r in recs if r.label == "MANAGEMENT_MEMBER" and (r.attrs.get("mgmt_position") or r.attrs.get("mgmt_division"))),
+                      reverse=True)
+        history, seen_pos = [], set()
+        for y, _, pos, div in held:
+            k = (y, pos, div)
+            if k not in seen_pos:
+                seen_pos.add(k)
+                history.append(f"{y or '?'}: {', '.join(x for x in (pos, div) if x)}")
+        mgmt_pos = held[0][2] if held else None
+        mgmt_div = held[0][3] if held else None
+        applied = title_case(_latest([r for r in recs if r.label == "MANAGEMENT_CANDIDATE"], "applied_position"))
         primary = next((r for r in ROLE_ORDER if r in labels), None)
         selected = sorted({r.label for r in recs if r.status in {"SELECTED", "ACTIVE"}})
         gold.append({
             "person_id": pid, "full_name": p["full_name"], "email": p["email"], "phone": p["phone"], "linkedin": p["linkedin"],
             "primary_role": primary, "roles": ", ".join(sorted(labels)), "n_roles": len(labels), "selected_roles": ", ".join(selected),
             **{f"is_{lbl.lower()}": lbl in labels for lbl in ROLE_ORDER},
+            "mgmt_position": mgmt_pos, "mgmt_division": mgmt_div, "mgmt_level": position_level(mgmt_pos),
+            "mgmt_history": " | ".join(history) or None, "applied_position": applied,
             "first_year": p["first_year"], "last_year": p["last_year"],
             # Years with IM: distinct years with any role; span counts from the first to the last year.
             "years_with_im": len(p["years"]), "years_span": (p["last_year"] - p["first_year"] + 1) if p["first_year"] else 0,
@@ -538,14 +585,14 @@ def aggregate_graph(gold: list[dict], events: list[dict], mentorships: list[dict
 DIRECTORY_FIELDS = ["name", "roles", "city", "province", "region", "country", "study_country", "target_country",
                     "institution", "first_year", "last_year", "events_attended", "events_spoken", "mentees_mentored", "mentors_had",
                     "birth_city", "birth_province", "birth_region", "origin_country", "years_with_im", "linkedin", "profile",
-                    "email_variants", "email_hint"]
+                    "email_variants", "email_hint", "mgmt_position", "mgmt_division", "mgmt_level", "mgmt_history", "applied_position"]
 
 
 def directory(built: dict, mentorships: list[dict], review: list[dict] | None = None, dups: list[dict] | None = None,
               records: list | None = None, titles: dict | None = None, unnamed: list | None = None) -> dict:
     """Names for the site's tree view, only when config people.publish_directory is true.
 
-    Deliberately minimal: no email, phone, LinkedIn, birth date or birth place. People are referred to
+    Deliberately minimal: no phone or birth date; email only for people with no name (the email is their only label). People are referred to
     by their position in the list, not by person_id.
     """
     gold = sorted(built["gold"], key=lambda g: (not g["full_name"], (g["full_name"] or g["email"] or "").lower()))
@@ -556,7 +603,8 @@ def directory(built: dict, mentorships: list[dict], review: list[dict] | None = 
                g["target_country"], g["institution"], g["first_year"], g["last_year"], g["events_attended"],
                g["events_spoken"], g["mentees_mentored"], g["mentors_had"], g["birth_city"], g["birth_province"],
                g["birth_island_region"], g["origin_country"], g["years_with_im"], g["linkedin_url"], g["profile_url"],
-               g["email_variants"], hints.get(g["person_id"]) if not g["full_name"] else None] for g in gold]
+               g["email_variants"], (g["email"] or hints.get(g["person_id"])) if not g["full_name"] else None,
+               g["mgmt_position"], g["mgmt_division"], g["mgmt_level"], g["mgmt_history"], g["applied_position"]] for g in gold]
     pairs = [[index[m["mentor_id"]], index[m["mentee_id"]], m["program"], m["year"]] for m in mentorships
              if m["mentor_id"] in index and m["mentee_id"] in index]
     events = []

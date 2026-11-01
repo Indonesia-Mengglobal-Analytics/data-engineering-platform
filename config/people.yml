@@ -23,7 +23,7 @@ people:
   # Profile fields for the people gold table (pipeline/people_gold.py). The newest non-empty answer of a
   # person wins. Places are matched to city / province / island region / country with config/places.yml.
   attributes:
-    residence_city: [current_residence, "your current residency (city/ regency)", your_current_residency_city_regency, current residence]
+    residence_city: [current_residence, "your current residency (city/ regency)", your_current_residency_city_regency, current residence, current city]
     residence_province: ["your current residency (region)", your_current_residency_province]
     residence_country: [country_of_residency]
     birth_place: [place_of_birth, place of birth]
@@ -37,6 +37,10 @@ people:
     area_of_study: [doctoral_degree_areas_of_study, phd_area_of_study, master_area_of_study, "master's degree - area of study", area_of_study, bachelor_area_of_study]
     occupation_institution: ["current occupation - institution", current_occupation_institution, work_experience_name_of_institution]
     origin_country: [country_of_origin, country of origin]
+    # Management team: the position and division people hold (Accepted, SELECTED) or applied for (Applied, Recruitment).
+    mgmt_division: [division, divisi]
+    mgmt_position: [position, role, jabatan]
+    applied_position: [position choice 1, "position choice #1"]
     profile_url: [link_to_your_research_profile, research profile, google scholar, website, personal website]
 
   sources:

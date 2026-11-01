@@ -117,19 +117,26 @@ pdb = {"spreadsheet_id": "1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM", "title"
 
 # ---- Management
 accepted = [["", "", "", "", "", "", "Unique Members", "9", "2"], ["Year", "Email", "Division", "Position", "Count"]]
-for i in list(range(0, 8)) + [1]:
-    accepted.append([str(2022 + i % 3), POOL[i][1], "Data", "Member", "1"])
+ROLES = [("President office", "President"), ("Data", "head of data"), ("Data", "Data Engineer"), ("Mentorship", "Director"),
+         ("Mentorship", "Coordinator"), ("Editorial", "Editor in Chief"), ("Digital Content and Communications", "Social Media Manager"),
+         ("Digital Content and Communications", "content designer")]
+for i in range(0, 8):
+    accepted.append([str(2022 + i % 3), POOL[i][1], ROLES[i][0], ROLES[i][1], "1"])
+accepted.append(["2025", POOL[1][1], "Data", "Chief Data Officer", "1"])  # promoted the next year
 # People who only appear in the management sheets, which have no name column: they get no name.
 for k, e in enumerate(["mgmt.only.one@gmail.com", "mgmt.only.two@gmail.com", "mgmt.only.three@yahoo.com"]):
     accepted.append([str(2021 + k), e, "Partnership", "Member", "1"])
 applied = [[], ["Year", "Email", "International Exp", "Past IM Exp", "Position Choice 1"]]
+CHOICES = ["Data Analyst", "Data Engineer", "Content Writer", "Mentorship Coordinator", "Social Media Manager"]
 for i in range(0, 14):
-    applied.append([str(2022 + i % 3), POOL[i][1], "Yes", "Mentee", "Data"])
+    applied.append([str(2022 + i % 3), POOL[i][1], "Yes", "Mentee", CHOICES[i % len(CHOICES)]])
 mgmt = {"spreadsheet_id": "1XU3OVciel1WwKxwEQGj14X2J0Faxnw-wKRRTF7n6Rwc", "title": "[RAW] IM Management Team 2020 - 2025",
         "tabs": {"Accepted": accepted, "Applied": applied}}
 selected = {"spreadsheet_id": "14957JP6j5OBdFC5rIorWzK31UuQSnmF3d1Lx2rLbXX0", "title": "[RAW] IM Management Team - SELECTED",
             "tabs": {"Sheet1": [["Year", "Location", "Email", "Name", "Division", "Role"]]
-                     + [["2025", "Jakarta", POOL[i][1], POOL[i][0], "Data", "Analyst"] for i in range(0, 5)]}}
+                     + [["2025", "Jakarta", POOL[i][1], POOL[i][0], d, r] for i, (d, r) in
+                        zip(range(0, 5), [("Data", "Data Analyst"), ("Data", "Data Engineer"), ("Mentorship", "Coordinator"),
+                                          ("Editorial", "Columnist for UK/Europe"), ("Information Technology", "Director")])]}}
 
 # ---- PhD bootcamp (has a Dummy_ column) and PhD 2026 mentors (contract sheet)
 bootcamp = {"spreadsheet_id": "1jvWpB1M7uE18wRh0szgqimQptLI1AMqv2f66D_zR4zw", "title": "phd bootcamp",

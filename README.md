@@ -160,6 +160,7 @@ system asks for reduced motion), and long lists of people show 40 at a time. Fiv
 | Study country | Country studied in (mentors) or targeted (mentees) → role → people |
 | Origin | Island region of birth (or born abroad → country) → province → city → role group → people |
 | Years with IM | 1 year / 2 years / 3–4 years / 5+ years (distinct years with any role) → role group → people |
+| Management | Management team → division → position (leadership first) → people; Applicants → position applied for → people |
 | Possible duplicates | Reason (same phone, same name, one email with different names, mentor and mentee in one year) → the people involved |
 
 Filters: search (name, city, province, region, country, institution), roles, region, province, Indonesia or abroad,
@@ -168,6 +169,18 @@ place, origin, years with IM, study, events, mentors, mentees and possible dupli
 or research-profile link they gave us. Without one, a **Search LinkedIn** button opens a LinkedIn search for their
 name and campus: a suggestion for a team member to check, never stored. Profiles are not crawled or guessed. The tree reads `people_directory.json`, written only while
 `publish_directory: true` in `config/people.yml`.
+
+### Management positions
+
+From the management sheets the gold table takes each member's **position** and **division** (Accepted: Division and
+Position; SELECTED: Division and Role), the **position history** by year ("2023: Head of Data, Data | 2025: Chief Data
+Officer, Data"), a **level** (Leadership: president, VP, director, head, chief, editor in chief; Manager / lead:
+manager, lead, coordinator; otherwise Team member) and, for applicants, the **position applied for** (Applied and
+Recruitment: Position choice 1). Titles are tidied ("head of data" → "Head of Data", "ceo" → "CEO"). The tree has a
+**Management** view and Level, Division and Position filters; the person panel shows the position, level and history.
+
+People with no name in any source are labelled by their full email in the tree (split at the "@" onto two lines when it
+does not fit), since it is the only way to tell them apart.
 
 ### Anomaly detection
 

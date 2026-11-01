@@ -1165,7 +1165,7 @@
   const ROLE_GROUP = Object.fromEntries(ROLE_GROUPS.flatMap((g) => g.roles.map((r) => [r, g])));
   const roleColor = (r) => ROLE_GROUP[r]?.color || "--c9";
   const TREE_VIEWS = [
-    ["role", "By role"], ["place", "Lives in"], ["origin", "Origin"], ["years", "Years with IM"], ["mentor", "Mentorship"],
+    ["role", "By role"], ["mgmt", "Management"], ["place", "Lives in"], ["origin", "Origin"], ["years", "Years with IM"], ["mentor", "Mentorship"],
     ["event", "Events"], ["study", "Study country"], ["dups", "Possible duplicates"],
   ];
   const DUP_TYPES = {
@@ -1178,7 +1178,7 @@
   const TREE = {
     view: "role", q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0,
     mentored: false, yearFrom: "", yearTo: "", expanded: new Set(["root"]), caps: new Map(), selected: null,
-    prev: new Map(), els: new Map(), auto: true, origin: "", minYears: 0, linked: false, dupOnly: false,
+    prev: new Map(), els: new Map(), auto: true, origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "",
   };
   const NODE_W = 196, NODE_H = 32, COL = NODE_W + 64, ROW = 42, PAD = 24, CAP = 40;
   let DIR = null;
@@ -1194,8 +1194,9 @@
         fy: r[f.first_year], ly: r[f.last_year], ev: r[f.events_attended], sp: r[f.events_spoken], mm: r[f.mentees_mentored], mh: r[f.mentors_had],
         bcity: r[f.birth_city], bprov: r[f.birth_province], bregion: r[f.birth_region], origin: r[f.origin_country],
         yrs: r[f.years_with_im] || 0, li: r[f.linkedin], prof: r[f.profile], emv: r[f.email_variants] || 1 };
-      if (!p.name) { p.unnamed = true; p.name = `No name · ${r[f.email_hint] || "email hidden"}`; } else p.name = niceName(p.name);
-      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, p.bcity, p.bprov, p.bregion, p.origin, ...p.roles.map(roleName)]
+      Object.assign(p, { mpos: r[f.mgmt_position], mdiv: r[f.mgmt_division], mlevel: r[f.mgmt_level], mhist: r[f.mgmt_history], applied: r[f.applied_position] });
+      if (!p.name) { p.unnamed = true; p.email = r[f.email_hint] || ""; p.name = `No name · ${p.email || "email hidden"}`; } else p.name = niceName(p.name);
+      p.hay = [p.name, p.city, p.province, p.region, p.country, p.study, p.target, p.inst, p.bcity, p.bprov, p.bregion, p.origin, p.mpos, p.mdiv, p.applied, ...p.roles.map(roleName)]
         .filter(Boolean).join(" · ").toLowerCase();
       return p;
     });
@@ -1250,18 +1251,21 @@
       if (t.minYears && p.yrs < t.minYears) return false;
       if (t.linked && !p.li && !p.prof) return false;
       if (t.dupOnly && !dir.dups.has(p.i)) return false;
+      if (t.mdiv && p.mdiv !== t.mdiv) return false;
+      if (t.mpos && p.mpos !== t.mpos && p.applied !== t.mpos) return false;
+      if (t.mlevel && p.mlevel !== t.mlevel) return false;
       return true;
     });
   }
 
   // node: {key, label, kind, color, children: Map, people: Set, person?}
-  function tnode(key, label, kind, color) { return { key, label, kind, color, children: new Map(), people: new Set() }; }
+  function tnode(key, label, kind, color, level) { return { key, label, kind, color, level, children: new Map(), people: new Set() }; }
   function addPath(root, segs, p, leafKey = "") {
     let n = root;
     n.people.add(p.i);
     for (const s of segs) {
       const key = `${n.key}/${s.kind}:${s.label}`;
-      if (!n.children.has(key)) n.children.set(key, tnode(key, s.label, s.kind, s.color));
+      if (!n.children.has(key)) n.children.set(key, tnode(key, s.label, s.kind, s.color, s.level));
       n = n.children.get(key);
       n.people.add(p.i);
     }
@@ -1291,6 +1295,21 @@
       for (const p of people) for (const r of p.roles.filter(shown)) {
         const g = ROLE_GROUP[r];
         addPath(root, [...locSegs(p), { kind: "group", label: g.key, color: g.color }, { kind: "role", label: roleName(r), color: g.color }], p);
+      }
+    } else if (v === "mgmt") {
+      const LEVELS = ["Leadership", "Manager / lead", "Team member"];
+      for (const p of people) {
+        const heldOk = !TREE.mpos || p.mpos === TREE.mpos;
+        const appliedOk = !TREE.mlevel && !TREE.mdiv && (!TREE.mpos || p.applied === TREE.mpos);
+        if (!heldOk) { /* shown only under the applicants for this position */ } else if (p.roles.includes("MANAGEMENT_MEMBER") && (p.mdiv || p.mpos)) {
+          addPath(root, [{ kind: "group", label: "Management team", color: "--c6" }, { kind: "division", label: p.mdiv || "Division not stated", color: "--c6" },
+            { kind: "position", label: p.mpos || "Position not stated", color: "--c6", level: LEVELS.indexOf(p.mlevel) }], p);
+        } else if (p.roles.includes("MANAGEMENT_MEMBER") && !TREE.mlevel && !TREE.mdiv) {
+          addPath(root, [{ kind: "group", label: "Management team", color: "--c6" }, { kind: "division", label: "Division not stated", color: "--c9" }], p);
+        }
+        if (appliedOk && p.roles.includes("MANAGEMENT_CANDIDATE") && p.applied) {
+          addPath(root, [{ kind: "group", label: "Applicants", color: "--c10" }, { kind: "position", label: `Applied: ${p.applied}`, color: "--c10" }], p);
+        }
       }
     } else if (v === "origin") {
       for (const p of people) for (const r of p.roles.filter(shown)) {
@@ -1346,7 +1365,8 @@
 
   const yearOrder = (l) => { const i = YEAR_BUCKETS.findIndex((b) => b[2] === l); return i < 0 ? 99 : i; };
   const sortChildren = (n) => [...n.children.values()].sort((a, b) =>
-    (a.kind === "person") - (b.kind === "person") || (a.kind === "years" && b.kind === "years" ? yearOrder(a.label) - yearOrder(b.label)
+    (a.kind === "person") - (b.kind === "person") || (a.kind === "position" && b.kind === "position" && a.level != null && b.level != null && a.level !== b.level ? a.level - b.level
+      : a.kind === "years" && b.kind === "years" ? yearOrder(a.label) - yearOrder(b.label)
       : a.kind === "year" && b.kind === "year" ? b.label.localeCompare(a.label)
       : a.kind === "person" ? a.label.localeCompare(b.label) : b.people.size - a.people.size || a.label.localeCompare(b.label)));
 
@@ -1427,13 +1447,20 @@
       const p = dir.people[n.person];
       const q = TREE.q.trim().toLowerCase();
       const hit = q && p.name.toLowerCase().includes(q);
-      const sub = [p.city || p.province || (p.country && p.country !== "Indonesia" ? p.country : ""), p.yrs ? `${p.yrs} yr${p.yrs > 1 ? "s" : ""}` : "",
+      const sub = [TREE.view === "mgmt" || TREE.mpos || TREE.mdiv || TREE.mlevel ? (p.mpos || (p.applied ? `applied: ${p.applied}` : "")) : "",
+        p.city || p.province || (p.country && p.country !== "Indonesia" ? p.country : ""), p.yrs ? `${p.yrs} yr${p.yrs > 1 ? "s" : ""}` : "",
         p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
       const dup = dir.dups.has(n.person);
       // Space for text: box width minus avatar, toggle, LinkedIn badge and duplicate dot.
       const room = NODE_W - 33 - 10 - (canOpen ? 24 : 0) - (p.li ? 21 : 0) - (dup ? 12 : 0);
-      const label = p.unnamed ? p.name.replace("No name · ", "") : p.name;
-      const subline = p.unnamed ? ["No name", sub].filter(Boolean).join(" · ") : sub;
+      // People with no name are labelled by their full email; when it does not fit on one line it splits at the "@".
+      let label = p.name, subline = sub;
+      if (p.unnamed) {
+        const email = p.email || "email hidden", at = email.indexOf("@");
+        const fits = textWidth(email, 12.5, 500) <= room;
+        label = fits || at < 0 ? email : email.slice(0, at);
+        subline = [fits || at < 0 ? "No name" : `${email.slice(at)} · No name`, sub].filter(Boolean).join(" · ");
+      }
       return `<rect class="tn-box person ${sel ? "sel" : ""} ${hit ? "hit" : ""}" width="${NODE_W}" height="${NODE_H}" rx="16"/>
         <circle cx="16" cy="${NODE_H / 2}" r="11" fill="var(${p.unnamed ? "--c9" : n.color})"/><text class="tn-ini" x="16" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
         <title>${esc(p.name)}${sub ? ` · ${esc(sub)}` : ""}</title>
@@ -1475,6 +1502,8 @@
     const years = [...new Set(dir.people.flatMap((p) => [p.fy, p.ly]).filter(Boolean))].sort();
     const provinces = [...new Set(dir.people.map((p) => p.province).filter(Boolean))].sort();
     const countries = [...new Set(dir.people.flatMap((p) => [p.study, p.target]).filter((c) => c && c !== "Indonesia"))].sort();
+    const divisions = [...new Set(dir.people.map((p) => p.mdiv).filter(Boolean))].sort();
+    const positionsFor = (div) => [...new Set(dir.people.filter((p) => !div || p.mdiv === div).flatMap((p) => [p.mpos, div ? null : p.applied]).filter(Boolean))].sort();
     const origins = [...new Set(dir.people.map(originOf))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
     const regions = [...new Set(dir.people.map((p) => placeOf(p) || "Not stated"))].sort((a, b) => (a === "Not stated") - (b === "Not stated") || (a === "Abroad") - (b === "Abroad") || a.localeCompare(b));
     let anim = null, layoutNow = null;
@@ -1488,6 +1517,10 @@
           <input id="tf-q" type="search" placeholder="Name, city, province, campus…" value="${esc(TREE.q)}" aria-label="Search people" autocomplete="off"></div>
         <div id="tf-hits" class="tf-hits"></div>
         <div class="tf-sec"><div class="tf-h">Role</div>${ROLE_GROUPS.map((g) => `<div class="tf-group"><div class="tf-gh">${esc(g.key)}</div><div class="fchips">${g.roles.map((r) => chip(TREE.roles.has(r), "data-role", r, roleName(r), g.color)).join("")}</div></div>`).join("")}</div>
+        <div class="tf-sec"><div class="tf-h">Management position</div>
+          <div class="fchips">${["Leadership", "Manager / lead", "Team member"].map((l) => chip(TREE.mlevel === l, "data-mlevel", l, l, l === "Leadership" ? "--c6" : l === "Manager / lead" ? "--c10" : "--c9")).join("")}</div>
+          <label class="tf-field"><span>Division</span><select id="tf-mdiv"><option value="">Any division</option>${divisions.map((v) => opt(v, TREE.mdiv)).join("")}</select></label>
+          <label class="tf-field"><span>Position (held or applied for)</span><select id="tf-mpos"><option value="">Any position</option>${positionsFor(TREE.mdiv).map((v) => opt(v, TREE.mpos)).join("")}</select></label></div>
         <div class="tf-sec"><div class="tf-h">Lives in</div><div class="fchips">${regions.map((r) => chip(TREE.regions.has(r), "data-region", r, r)).join("")}</div>
           <label class="tf-field"><span>Province</span><select id="tf-prov"><option value="">Any province</option>${provs.map((v) => opt(v, TREE.province)).join("")}</select></label>
           <div class="seg">${[["any", "Anywhere"], ["id", "Indonesia"], ["abroad", "Abroad"]].map(([v, l]) => `<button type="button" data-lives="${v}" class="${TREE.lives === v ? "on" : ""}">${l}</button>`).join("")}</div></div>
@@ -1513,6 +1546,9 @@
       $("#tf-ev").addEventListener("change", (e) => { TREE.minEvents = +e.target.value; changed(); });
       $("#tf-mentored").addEventListener("change", (e) => { TREE.mentored = e.target.checked; changed(); });
       $("#tf-origin").addEventListener("change", (e) => { TREE.origin = e.target.value; changed(); });
+      $("#tf-mdiv").addEventListener("change", (e) => { TREE.mdiv = e.target.value; TREE.mpos = ""; changed(); });
+      $("#tf-mpos").addEventListener("change", (e) => { TREE.mpos = e.target.value; changed(); });
+      $$("[data-mlevel]", f).forEach((b) => b.addEventListener("click", () => { TREE.mlevel = TREE.mlevel === b.dataset.mlevel ? "" : b.dataset.mlevel; changed(); }));
       $("#tf-years").addEventListener("change", (e) => { TREE.minYears = +e.target.value; changed(); });
       $("#tf-linked").addEventListener("change", (e) => { TREE.linked = e.target.checked; changed(); });
       $("#tf-dup").addEventListener("change", (e) => { TREE.dupOnly = e.target.checked; changed(); });
@@ -1520,7 +1556,7 @@
       $("#tf-to").addEventListener("change", (e) => { TREE.yearTo = e.target.value; changed(); });
       $("#tf-reset").addEventListener("click", () => {
         Object.assign(TREE, { q: "", roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "",
-          origin: "", minYears: 0, linked: false, dupOnly: false });
+          origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "" });
         TREE.expanded = new Set(["root"]); TREE.selected = null;
         const box = $("#tree-detail"); box.classList.remove("open"); box.hidden = true;
         changed();
@@ -1536,8 +1572,8 @@
       if (!box) return;
       if (!TREE.q.trim()) { box.innerHTML = ""; return; }
       const hits = treeFilter(dir).slice(0, 6);
-      box.innerHTML = hits.length ? hits.map((p) => `<button type="button" data-hit="${p.i}"><span class="ini" style="background:var(${roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
-        <span><b>${esc(p.name)}</b><small>${esc([p.roles.slice(0, 2).map(roleName).join(", ") + (p.roles.length > 2 ? ` +${p.roles.length - 2}` : ""), p.city || p.province || p.country].filter(Boolean).join(" · "))}</small></span></button>`).join("")
+      box.innerHTML = hits.length ? hits.map((p) => `<button type="button" data-hit="${p.i}"><span class="ini" style="background:var(${p.unnamed ? "--c9" : roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
+        <span><b>${esc(p.unnamed ? p.email : p.name)}</b>${p.unnamed ? `<small>No name</small>` : ""}<small>${esc([p.roles.slice(0, 2).map(roleName).join(", ") + (p.roles.length > 2 ? ` +${p.roles.length - 2}` : ""), p.city || p.province || p.country].filter(Boolean).join(" · "))}</small></span></button>`).join("")
         : `<p class="muted small">No one matches.</p>`;
       $$("[data-hit]", box).forEach((b) => b.addEventListener("click", () => reveal(+b.dataset.hit)));
     };
@@ -1545,7 +1581,7 @@
     const drawToolbar = (count, total) => {
       const active = [TREE.q && `“${TREE.q}”`, ...[...TREE.roles].map(roleName), ...TREE.regions, TREE.province, TREE.lives !== "any" && (TREE.lives === "id" ? "In Indonesia" : "Abroad"),
         TREE.country, TREE.minEvents && `${TREE.minEvents}+ events`, TREE.mentored && "Mentored someone",
-        TREE.origin && `Born in ${TREE.origin}`, TREE.minYears && `${TREE.minYears}+ years with IM`, TREE.linked && "Has a link", TREE.dupOnly && "Possible duplicates", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
+        TREE.origin && `Born in ${TREE.origin}`, TREE.mlevel, TREE.mdiv, TREE.mpos, TREE.minYears && `${TREE.minYears}+ years with IM`, TREE.linked && "Has a link", TREE.dupOnly && "Possible duplicates", (TREE.yearFrom || TREE.yearTo) && `${TREE.yearFrom || "…"}–${TREE.yearTo || "…"}`].filter(Boolean);
       $("#tree-toolbar").innerHTML = `<div class="seg views">${TREE_VIEWS.map(([v, l]) => `<button type="button" data-view="${v}" class="${TREE.view === v ? "on" : ""}">${l}</button>`).join("")}</div>
         <div class="tt-meta"><b>${fmtInt(count)}</b> <span class="muted">of ${fmtInt(total)} people</span>${active.length ? `<span class="tt-chips">${active.map((a) => `<span>${esc(a)}</span>`).join("")}</span>` : ""}</div>
         <div class="tt-actions"><button type="button" class="btn btn-sm" data-act="collapse">Collapse</button><button type="button" class="btn btn-sm" data-act="level">Expand a level</button></div>`;
@@ -1565,7 +1601,7 @@
       if (!TREE.auto) return;
       TREE.auto = false;
       const filtered = TREE.q.trim() || TREE.roles.size || TREE.regions.size || TREE.province || TREE.lives !== "any" || TREE.country || TREE.minEvents || TREE.mentored || TREE.yearFrom || TREE.yearTo
-        || TREE.origin || TREE.minYears || TREE.linked || TREE.dupOnly || TREE.view === "dups";
+        || TREE.origin || TREE.minYears || TREE.linked || TREE.dupOnly || TREE.view === "dups" || TREE.mdiv || TREE.mpos || TREE.mlevel;
       const limit = filtered && count <= 60 ? 99 : filtered && count <= 400 ? 3 : 1;
       const walk = (n, depth) => { if (depth < limit && n.children.size) { TREE.expanded.add(n.key); n.children.forEach((c) => c.kind !== "person" && walk(c, depth + 1)); } };
       walk(root, 0);
@@ -1689,7 +1725,8 @@
     const reveal = (pi) => {
       const p = dir.people[pi];
       TREE.q = ""; const q = $("#tf-q"); if (q) q.value = "";
-      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "", origin: "", minYears: 0, linked: false, dupOnly: false });
+      if (!treeFilter(dir).some((x) => x.i === pi)) Object.assign(TREE, { roles: new Set(), regions: new Set(), province: "", lives: "any", country: "", minEvents: 0, mentored: false, yearFrom: "", yearTo: "", origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "" });
+      if (TREE.view === "mgmt" && !(p.mpos || p.mdiv || p.applied)) TREE.view = "role";
       if (TREE.view === "dups" && !dir.dups.has(pi)) TREE.view = "role";
       if (TREE.view === "mentor" && !dir.mentees.has(pi) && !dir.mentors.has(pi)) TREE.view = "role";
       if (TREE.view === "event" && !dir.eventsOf.has(pi)) TREE.view = "role";
@@ -1711,7 +1748,7 @@
       const link = (i, extra = "") => `<button type="button" class="linkish" data-person="${i}">${esc(dir.people[i].name)}</button>${extra}`;
       const mentees = dir.mentees.get(pi) || [], mentors = dir.mentors.get(pi) || [], evs = dir.eventsOf.get(pi) || [];
       box.innerHTML = `<header><span class="ini lg" style="background:var(${p.unnamed ? "--c9" : roleColor(p.roles[0])})">${esc(initials(p.name))}</span>
-          <div><h3>${esc(p.name)}</h3><div class="muted small">${esc([p.city, p.province, p.region].filter(Boolean).join(", ") || (p.country && p.country !== "Indonesia" ? `Lives in ${p.country}` : "Location not stated"))}</div></div>
+          <div><h3 class="${p.unnamed ? "td-email" : ""}">${esc(p.unnamed ? p.email : p.name)}</h3><div class="muted small">${p.unnamed ? "No name in any source · " : ""}${esc([p.city, p.province, p.region].filter(Boolean).join(", ") || (p.country && p.country !== "Indonesia" ? `Lives in ${p.country}` : "Location not stated"))}</div></div>
           <button type="button" class="icon-btn" id="td-close" aria-label="Close">✕</button></header>
         ${p.unnamed ? `<div class="td-dups"><div class="tf-h">No name in any source</div><p class="small">${dir.unnamedWhy.get(pi)?.cause === "left_blank" ? "The name was left blank in every form this person filled in." : "Every sheet this person appears in has no name column."}</p>
           <p class="muted small">From: ${esc((dir.unnamedWhy.get(pi)?.srcs || []).join(", ") || "–")}</p></div>` : ""}
@@ -1721,6 +1758,10 @@
           ${p.prof ? `<a class="lbtn" href="${esc(p.prof)}" target="_blank" rel="noopener noreferrer">${icon("ext", 11)} Profile</a>` : ""}
           ${!p.li && !p.unnamed ? `<a class="lbtn ghost" href="https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([p.name, p.inst].filter(Boolean).join(" "))}" target="_blank" rel="noopener noreferrer" title="Opens a LinkedIn search. Check it is the right person before adding the link to the source sheet.">Search LinkedIn</a>` : ""}</div>
         ${!p.li && !p.unnamed ? `<p class="muted small td-note">No LinkedIn given. The search is a suggestion only: confirm it is the same person, then add the link to the source sheet.</p>` : ""}
+        ${p.mpos || p.mdiv || p.applied ? `<div class="td-mgmt"><div class="tf-h">Management</div>
+          ${p.mpos || p.mdiv ? `<p class="td-pos"><b>${esc(p.mpos || "Position not stated")}</b>${p.mdiv ? ` · ${esc(p.mdiv)}` : ""}${p.mlevel ? ` <span class="lvl">${esc(p.mlevel)}</span>` : ""}</p>` : ""}
+          ${p.mhist && p.mhist.includes(" | ") ? `<ul class="td-hist">${p.mhist.split(" | ").map((h) => `<li>${esc(h)}</li>`).join("")}</ul>` : ""}
+          ${p.applied ? `<p class="muted small">Applied for: ${esc(p.applied)}</p>` : ""}</div>` : ""}
         <dl class="kv">
           <dt>Years with IM</dt><dd>${p.yrs ? `${p.yrs} year${p.yrs > 1 ? "s" : ""}` : "–"}${p.fy ? ` <span class="muted small">(${p.fy}${p.ly && p.ly !== p.fy ? `–${p.ly}` : ""})</span>` : ""}</dd>
           <dt>Born in</dt><dd>${esc([p.bcity, p.bprov].filter(Boolean).join(", ") || (p.origin && p.origin !== "Indonesia" ? p.origin : "–"))}</dd>
