@@ -117,7 +117,7 @@ pdb = {"spreadsheet_id": "1W8VrZeyT1HKyZ1KQqI6tVOfw08WZ6-8zZ0eCO_eagFM", "title"
 
 # ---- Management
 accepted = [["", "", "", "", "", "", "Unique Members", "9", "2"], ["Year", "Email", "Division", "Position", "Count"]]
-ROLES = [("President office", "President"), ("Data", "head of data"), ("Data", "Data Engineer"), ("Mentorship", "Director"),
+ROLES = [("President office", "Vice President of Strategic Communication and Partnership"), ("Data", "head of data"), ("Data", "Data Engineer"), ("Mentorship", "Director"),
          ("Mentorship", "Coordinator"), ("Editorial", "Editor in Chief"), ("Digital Content and Communications", "Social Media Manager"),
          ("Digital Content and Communications", "content designer")]
 for i in range(0, 8):

@@ -661,3 +661,7 @@ table.heat thead th { white-space: normal; min-width: 64px; font-weight: 500; }
 .tf-field select, .tf-search { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .tf-field select { text-overflow: ellipsis; }
 .tree-detail h3.td-email { font-size: 13.5px; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-weight: 600; }
+.tn-cap { font-size: 8.5px; letter-spacing: .6px; fill: var(--text-muted); font-weight: 600; }
+.tn-label.grp { font-weight: 600; }
+.tn-label.grp.two { font-size: 12px; }
+.tn-root .tn-cap { fill: rgba(255, 255, 255, .75); }

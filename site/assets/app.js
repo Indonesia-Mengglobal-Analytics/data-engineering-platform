@@ -1180,7 +1180,22 @@
     mentored: false, yearFrom: "", yearTo: "", expanded: new Set(["root"]), caps: new Map(), selected: null,
     prev: new Map(), els: new Map(), auto: true, origin: "", minYears: 0, linked: false, dupOnly: false, mdiv: "", mpos: "", mlevel: "",
   };
-  const NODE_W = 196, NODE_H = 32, COL = NODE_W + 64, ROW = 42, PAD = 24, CAP = 40;
+  const NODE_W = 216, NODE_H = 40, COL = NODE_W + 64, ROW = 50, PAD = 24, CAP = 40;
+  // Caption shown above a group label, so the label itself can be just the value ("Content Writer", not "Applied: Content W…").
+  const KIND_CAPTION = { group: "Program", role: "Role", region: "Region", province: "Province", city: "City", country: "Country",
+    division: "Division", position: "Position", applied: "Applied for", years: "Years with IM", year: "Year", event: "Event",
+    erole: "Event role", dtype: "Duplicate check", pair: "Possible pair" };
+  // Split a label over two lines at word boundaries; the second line is shortened only if it still does not fit.
+  function wrapTwo(text, maxPx, size = 12, weight = 500) {
+    const words = String(text).split(/\s+/);
+    let line1 = "";
+    for (let i = 0; i < words.length; i++) {
+      const next = line1 ? `${line1} ${words[i]}` : words[i];
+      if (textWidth(next, size, weight) > maxPx && line1) return [line1, fitText(words.slice(i).join(" "), maxPx, size, weight)];
+      line1 = next;
+    }
+    return [fitText(line1, maxPx, size, weight), ""];
+  }
   let DIR = null;
 
   function directoryPeople() {
@@ -1308,7 +1323,7 @@
           addPath(root, [{ kind: "group", label: "Management team", color: "--c6" }, { kind: "division", label: "Division not stated", color: "--c9" }], p);
         }
         if (appliedOk && p.roles.includes("MANAGEMENT_CANDIDATE") && p.applied) {
-          addPath(root, [{ kind: "group", label: "Applicants", color: "--c10" }, { kind: "position", label: `Applied: ${p.applied}`, color: "--c10" }], p);
+          addPath(root, [{ kind: "group", label: "Applicants", color: "--c10" }, { kind: "applied", label: p.applied, color: "--c10" }], p);
         }
       }
     } else if (v === "origin") {
@@ -1452,7 +1467,7 @@
         p.ev ? `${p.ev} ev` : "", p.mm ? `${p.mm} mentee${p.mm > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
       const dup = dir.dups.has(n.person);
       // Space for text: box width minus avatar, toggle, LinkedIn badge and duplicate dot.
-      const room = NODE_W - 33 - 10 - (canOpen ? 24 : 0) - (p.li ? 21 : 0) - (dup ? 12 : 0);
+      const room = NODE_W - 36 - 10 - (canOpen ? 24 : 0) - (p.li ? 21 : 0) - (dup ? 12 : 0);
       // People with no name are labelled by their full email; when it does not fit on one line it splits at the "@".
       let label = p.name, subline = sub;
       if (p.unnamed) {
@@ -1462,10 +1477,10 @@
         subline = [fits || at < 0 ? "No name" : `${email.slice(at)} · No name`, sub].filter(Boolean).join(" · ");
       }
       return `<rect class="tn-box person ${sel ? "sel" : ""} ${hit ? "hit" : ""}" width="${NODE_W}" height="${NODE_H}" rx="16"/>
-        <circle cx="16" cy="${NODE_H / 2}" r="11" fill="var(${p.unnamed ? "--c9" : n.color})"/><text class="tn-ini" x="16" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
+        <circle cx="17" cy="${NODE_H / 2}" r="12" fill="var(${p.unnamed ? "--c9" : n.color})"/><text class="tn-ini" x="17" y="${NODE_H / 2 + 3.5}" text-anchor="middle">${esc(initials(p.name))}</text>
         <title>${esc(p.name)}${sub ? ` · ${esc(sub)}` : ""}</title>
-        <text class="tn-label ${p.unnamed ? "unnamed" : ""}" x="33" y="${subline ? 13 : NODE_H / 2 + 4}">${esc(fitText(label, room, 12.5, 500))}</text>
-        ${subline ? `<text class="tn-sub" x="33" y="25">${esc(fitText(subline, room, 10.5, 400))}</text>` : ""}
+        <text class="tn-label ${p.unnamed ? "unnamed" : ""}" x="36" y="${subline ? 17 : NODE_H / 2 + 4}">${esc(fitText(label, room, 12.5, 500))}</text>
+        ${subline ? `<text class="tn-sub" x="36" y="31">${esc(fitText(subline, room, 10.5, 400))}</text>` : ""}
         ${dup ? `<circle class="tn-dup" cx="${NODE_W - (canOpen ? 30 : 12)}" cy="9" r="4"><title>Possible duplicate: see details</title></circle>` : ""}
         ${p.li ? `<g class="tn-li" transform="translate(${NODE_W - (canOpen ? 36 : 18) - (dup ? 10 : 0)},${NODE_H / 2 + 1})"><rect x="-6" y="-6" width="12" height="12" rx="2.5"/><text y="3.2" text-anchor="middle">in</text></g>` : ""}
         ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
@@ -1473,10 +1488,22 @@
     const count = fmtInt(n.people.size);
     return `<rect class="tn-box group ${n.kind}" width="${NODE_W}" height="${NODE_H}" rx="7"/>
       <rect class="tn-accent" width="4" height="${NODE_H - 12}" x="7" y="6" rx="2" fill="var(${n.color})"/>
-      <title>${esc(n.label)}: ${count} people</title>
-      <text class="tn-label" x="18" y="${NODE_H / 2 + 4}">${esc(fitText(n.label, NODE_W - 18 - 10 - (canOpen ? 24 : 4) - textWidth(count, 11.5, 600) - 8, 12.5, 500))}</text>
+      <title>${esc(KIND_CAPTION[n.kind] ? `${KIND_CAPTION[n.kind]}: ` : "")}${esc(n.label)} · ${count} people</title>
+      ${groupText(n, NODE_W - 18 - 8 - (canOpen ? 24 : 4) - textWidth(count, 11.5, 600) - 8)}
       <g transform="translate(${NODE_W - (canOpen ? 30 : 10)},${NODE_H / 2})"><text class="tn-count" text-anchor="end" y="4">${count}</text></g>
       ${canOpen ? `<g class="tn-toggle" transform="translate(${NODE_W - 14},${NODE_H / 2})"><circle r="8"/><path d="${open ? "M-3.5,0H3.5" : "M-3.5,0H3.5M0,-3.5V3.5"}"/></g>` : ""}`;
+  }
+
+  // Group label: caption + value on one line each; a value too long for one line takes both lines instead.
+  function groupText(n, maxPx) {
+    const cap = n.kind === "root" ? "" : KIND_CAPTION[n.kind] || "";
+    if (textWidth(n.label, 12.5, 600) <= maxPx || !n.label.includes(" ")) {
+      const one = fitText(n.label, maxPx, 12.5, 600);
+      return cap ? `<text class="tn-cap" x="18" y="15">${esc(cap.toUpperCase())}</text><text class="tn-label grp" x="18" y="30">${esc(one)}</text>`
+        : `<text class="tn-label grp" x="18" y="${NODE_H / 2 + 4}">${esc(one)}</text>`;
+    }
+    const [a, b] = wrapTwo(n.label, maxPx, 12, 600);
+    return `<text class="tn-label grp two" x="18" y="17">${esc(a)}</text><text class="tn-label grp two" x="18" y="31">${esc(b)}</text>`;
   }
 
   function peopleTree(P) {
