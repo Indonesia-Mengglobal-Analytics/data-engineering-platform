@@ -418,6 +418,9 @@ def main() -> int:
         run["status"] = "succeeded" if all(s["status"] == "read" for s in inventory) else "partial"
         run["summary"] = {k: payload["kpis"][k] for k in ("records", "excluded", "people", "merged_records", "review_items", "sources_read")}
         run["summary"]["mentorships"] = len(links)
+        run["summary"].update({"dummy_likely": detector["dummy"]["likely"], "dummy_suspicious": detector["dummy"]["suspicious"],
+                               "duplicate_pairs_50": detector["duplicates"]["likely"] + detector["duplicates"]["suspicious"],
+                               "duplicate_pairs_80": detector["duplicates"]["likely"], "people_without_name": detector["unnamed"]["people"]})
     except Exception as error:
         failed = error
         run.update({"status": "failed", "error": f"{type(error).__name__}: {error}"})
