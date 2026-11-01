@@ -109,7 +109,7 @@ def test_people_job_end_to_end(tmp_path):
     acts = f"read_parquet('{lake}/lakehouse/people/activities.parquet')"
     assert con.execute(f"SELECT count(*) - count(DISTINCT (person_id, label, activity_year, status)) FROM {acts}").fetchone()[0] == 0
     sheet = json.loads((lake / "sheets" / "outputs" / "PEOPLE.json").read_text())
-    assert set(sheet["tabs"]) == {"People", "Activities", "Anomalies", "Review", "Sources", "About"}
+    assert set(sheet["tabs"]) == {"Gold", "Mentorships", "Events", "People", "Activities", "Anomalies", "Review", "Sources", "About"}
 
 
 def test_people_ids_are_stable_between_runs(tmp_path):
@@ -144,3 +144,102 @@ def test_people_tables_are_queryable(tmp_path):
     preview = next((lake / "sheets" / "previews").glob("*.json"))
     rows = json.loads(preview.read_text())["tabs"]["RESULT"]["rows"]
     assert ["MASTER_MENTEE"] in [r[:1] for r in rows]
+
+
+# ---------------------------------------------------------------- people gold
+
+@pytest.fixture(scope="module")
+def places():
+    import yaml
+    import people_gold as G
+    return G.Places(yaml.safe_load((ROOT / "config" / "places.yml").read_text()))
+
+
+@pytest.mark.parametrize("raw, city, province, region, country", [
+    ("Jakarta Selatan", "Jakarta Selatan", "DKI Jakarta", "Java", "Indonesia"),
+    ("Kuningan, Jakarta Selatan", "Jakarta Selatan", "DKI Jakarta", "Java", "Indonesia"),
+    ("Kota Bandung, Jawa Barat", "Bandung", "Jawa Barat", "Java", "Indonesia"),
+    ("Jogja", None, "DI Yogyakarta", "Java", "Indonesia"),
+    ("Kab. Sleman", "Sleman", "DI Yogyakarta", "Java", "Indonesia"),
+    ("NTB", None, "Nusa Tenggara Barat", "Bali & Nusa Tenggara", "Indonesia"),
+    ("Padang Panjang", "Padang Panjang", "Sumatera Barat", "Sumatra", "Indonesia"),
+    ("London, UK", None, None, None, "United Kingdom"),
+    ("Belanda", None, None, None, "Netherlands"),
+    ("Amerika Serikat", None, None, None, "United States"),
+    ("as soon as possible", None, None, None, None),
+    ("", None, None, None, None),
+])
+def test_places(places, raw, city, province, region, country):
+    m = places.match(raw)
+    assert (m["city"], m["province"], m["island_region"], m["country"]) == (city, province, region, country)
+
+
+@pytest.fixture(scope="module")
+def gold_run(tmp_path_factory):
+    import duckdb
+
+    res, lake, out = _run(tmp_path_factory.mktemp("gold"))
+    assert res.returncode == 0, res.stderr
+    con = duckdb.connect()
+    for t in ("gold_people", "mentorships", "graph_nodes", "graph_edges", "events"):
+        con.execute(f"CREATE VIEW {t} AS SELECT * FROM read_parquet('{lake}/lakehouse/people/{t}.parquet')")
+    return con, unseal(json.loads((out / "people.json").read_text()), PIN), lake
+
+
+def test_gold_one_row_per_person_with_counts(gold_run):
+    con, doc, _ = gold_run
+    assert con.execute("SELECT count(*), count(DISTINCT person_id) FROM gold_people").fetchone() == (doc["kpis"]["people"],) * 2
+    # Events attended equals the person's ATTENDED edges; mentees mentored equals MENTORED edges.
+    bad = con.execute("""SELECT count(*) FROM gold_people g
+        WHERE events_attended <> (SELECT count(*) FROM graph_edges e WHERE e.src = g.person_id AND edge_type = 'ATTENDED')
+           OR mentees_mentored <> (SELECT count(DISTINCT dst) FROM graph_edges e WHERE e.src = g.person_id AND edge_type = 'MENTORED')""").fetchone()[0]
+    assert bad == 0
+    dimas = con.execute("SELECT is_master_mentee, is_master_mentor, events_attended, residence_province FROM gold_people WHERE full_name = 'Dimas Wijaya'").fetchone()
+    assert dimas[:2] == (True, True) and dimas[2] >= 1
+    # A newer "London, UK" answer is not overridden by an older province answer.
+    assert con.execute("SELECT count(*) FROM gold_people WHERE residence_raw = 'London, UK' AND residence_country <> 'United Kingdom'").fetchone()[0] == 0
+
+
+def test_pairings_resolve_by_email_phone_and_unique_name(gold_run):
+    con, doc, _ = gold_run
+    assert dict(con.execute("SELECT program, count(*) FROM mentorships GROUP BY 1").fetchall()) == {"PHD": 6, "MASTER": 15}
+    # A capitalised email still matches; mentor ids resolve by phone, or by name when no phone.
+    assert con.execute("SELECT count(*) FROM mentorships WHERE program = 'PHD' AND match = 'email'").fetchone()[0] == 6
+    assert set(r[0] for r in con.execute("SELECT DISTINCT match FROM mentorships WHERE program = 'MASTER'").fetchall()) == {"name, phone", "name"}
+    # "Dewi Lestari" belongs to two people: never guessed.
+    master = next(s for s in doc["gold"]["mentorship"]["sources"] if s["key"] == "master_pairing")
+    assert master["unresolved"] == {"mentee_ambiguous_name": 1, "mentee_not_found": 1}
+    assert con.execute("SELECT count(*) FROM mentorships WHERE mentee_name = 'Dewi Lestari'").fetchone()[0] == 0
+
+
+def test_graph_edges_point_at_nodes(gold_run):
+    con, _, _ = gold_run
+    dangling = con.execute("""SELECT count(*) FROM graph_edges e WHERE e.src NOT IN (SELECT node_id FROM graph_nodes)
+                              OR e.dst NOT IN (SELECT node_id FROM graph_nodes)""").fetchone()[0]
+    assert dangling == 0
+    kinds = {r[0] for r in con.execute("SELECT DISTINCT edge_type FROM graph_edges").fetchall()}
+    assert {"HAS_ROLE", "ATTENDED", "SPOKE_AT", "MENTORED", "LIVES_IN", "BORN_IN", "STUDIED_IN", "TARGETS", "IN"} <= kinds
+
+
+def test_gold_site_aggregates_hide_small_groups(gold_run):
+    _, doc, _ = gold_run
+    g = doc["gold"]
+
+    def counts(obj):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in ("count", "people", "weight", "pairs", "participants", "speakers", "known") and isinstance(v, int):
+                    yield v
+                else:
+                    yield from counts(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from counts(v)
+
+    small = [n for n in counts({k: v for k, v in g.items() if k != "mentorship"}) if 0 < n < 5]
+    assert small == []
+    assert g["slices"]["ALL|ALL"]["province"]["values"][0]["value"] == "Jawa Barat"
+    assert g["graph"]["edges"] and all(e["weight"] >= 5 for e in g["graph"]["edges"])
+    blob = json.dumps(g)
+    for leaked in ("@gmail.com", "Dimas", "+62812", "IMP-"):
+        assert leaked not in blob

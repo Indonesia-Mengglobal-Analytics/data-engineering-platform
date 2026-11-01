@@ -14,7 +14,10 @@
     "Est Age",
     "",
     "birthday",
-    "current_residence"
+    "current_residence",
+    "application_1_country",
+    "application_1_university",
+    "bachelor_institution"
    ],
    [
     "2019",
@@ -27,7 +30,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jakarta Selatan",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -36,11 +42,14 @@
     "FALSE",
     "Budi Santoso",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "DKI Jakarta",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -49,11 +58,14 @@
     "FALSE",
     "Citra Nugroho",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Kota Bandung",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -62,11 +74,14 @@
     "TRUE",
     "Dimas Wijaya",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Bandung, Jawa Barat",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -75,11 +90,14 @@
     "FALSE",
     "Eka Rahman",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Surabaya",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -88,11 +106,14 @@
     "FALSE",
     "Fajar Hidayat",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jogja",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -105,7 +126,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Yogyakarta / DIY",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -114,11 +138,14 @@
     "FALSE",
     "Hadi Permata",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Medan",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -127,11 +154,14 @@
     "FALSE",
     "Intan Kusuma",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Makassar",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -140,11 +170,14 @@
     "TRUE",
     "Joko Lestari",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Depok",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -153,11 +186,14 @@
     "FALSE",
     "Kirana Pratama",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Tangerang Selatan",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -166,11 +202,14 @@
     "FALSE",
     "Lukman Santoso",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "London, UK",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -183,7 +222,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jakarta Selatan",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -192,11 +234,14 @@
     "FALSE",
     "Nanda Wijaya",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "DKI Jakarta",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -205,11 +250,14 @@
     "FALSE",
     "Oka Rahman",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Kota Bandung",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -218,11 +266,14 @@
     "TRUE",
     "Putri Hidayat",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Bandung, Jawa Barat",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -231,11 +282,14 @@
     "FALSE",
     "Raka Saputra",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Surabaya",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -244,11 +298,14 @@
     "FALSE",
     "Sari Permata",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jogja",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -261,7 +318,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Yogyakarta / DIY",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -270,11 +330,14 @@
     "FALSE",
     "Utami Lestari",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Medan",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -283,11 +346,14 @@
     "FALSE",
     "Vino Pratama",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Makassar",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -296,11 +362,14 @@
     "TRUE",
     "Wulan Santoso",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Depok",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -309,11 +378,14 @@
     "FALSE",
     "Yoga Nugroho",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Tangerang Selatan",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -322,11 +394,14 @@
     "FALSE",
     "Zahra Wijaya",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "London, UK",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -339,7 +414,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jakarta Selatan",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -348,11 +426,14 @@
     "FALSE",
     "Budi Hidayat",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "DKI Jakarta",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -361,11 +442,14 @@
     "FALSE",
     "Citra Saputra",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Kota Bandung",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -374,11 +458,14 @@
     "TRUE",
     "Dimas Permata",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Bandung, Jawa Barat",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -387,11 +474,14 @@
     "FALSE",
     "Eka Kusuma",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Surabaya",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -400,11 +490,14 @@
     "FALSE",
     "Fajar Lestari",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jogja",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -417,7 +510,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Yogyakarta / DIY",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -426,11 +522,14 @@
     "FALSE",
     "Hadi Santoso",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Medan",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -439,11 +538,14 @@
     "FALSE",
     "Intan Nugroho",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Makassar",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -452,11 +554,14 @@
     "TRUE",
     "Joko Wijaya",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Depok",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -465,11 +570,14 @@
     "FALSE",
     "Kirana Rahman",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Tangerang Selatan",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -478,11 +586,14 @@
     "FALSE",
     "Lukman Hidayat",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "London, UK",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -495,7 +606,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jakarta Selatan",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -504,11 +618,14 @@
     "FALSE",
     "Nanda Permata",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "DKI Jakarta",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -517,11 +634,14 @@
     "FALSE",
     "Oka Kusuma",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Kota Bandung",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -530,11 +650,14 @@
     "TRUE",
     "Putri Lestari",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Bandung, Jawa Barat",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -543,11 +666,14 @@
     "FALSE",
     "Raka Pratama",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Surabaya",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -556,11 +682,14 @@
     "FALSE",
     "Sari Santoso",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jogja",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -573,7 +702,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Yogyakarta / DIY",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -582,11 +714,14 @@
     "FALSE",
     "Utami Wijaya",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Medan",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -595,11 +730,14 @@
     "FALSE",
     "Vino Rahman",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Makassar",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -608,11 +746,14 @@
     "TRUE",
     "Wulan Hidayat",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Depok",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -621,11 +762,14 @@
     "FALSE",
     "Yoga Saputra",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Tangerang Selatan",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -634,11 +778,14 @@
     "FALSE",
     "Zahra Permata",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "London, UK",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -651,7 +798,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jakarta Selatan",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -660,11 +810,14 @@
     "FALSE",
     "Budi Lestari",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "DKI Jakarta",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -673,11 +826,14 @@
     "FALSE",
     "Citra Pratama",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Kota Bandung",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -686,11 +842,14 @@
     "TRUE",
     "Dimas Santoso",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Bandung, Jawa Barat",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -699,11 +858,14 @@
     "FALSE",
     "Eka Nugroho",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Surabaya",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -712,11 +874,14 @@
     "FALSE",
     "Fajar Wijaya",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jogja",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2019",
@@ -729,7 +894,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Yogyakarta / DIY",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2020",
@@ -738,11 +906,14 @@
     "FALSE",
     "Hadi Hidayat",
     "",
-    "Jakarta",
+    "Bandung",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Medan",
+    "UK",
+    "UCL",
+    "Universitas Indonesia"
    ],
    [
     "2021",
@@ -751,11 +922,14 @@
     "FALSE",
     "Intan Saputra",
     "",
-    "Jakarta",
+    "Surabaya",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Makassar",
+    "Belanda",
+    "Leiden University",
+    "Universitas Indonesia"
    ],
    [
     "2022",
@@ -764,11 +938,14 @@
     "TRUE",
     "Joko Permata",
     "",
-    "Jakarta",
+    "Medan",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Depok",
+    "USA",
+    "Stanford University",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -777,11 +954,14 @@
     "FALSE",
     "Kirana Kusuma",
     "",
-    "Jakarta",
+    "Padang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Tangerang Selatan",
+    "Australia",
+    "University of Melbourne",
+    "Universitas Indonesia"
    ],
    [
     "2024",
@@ -790,11 +970,14 @@
     "FALSE",
     "Lukman Lestari",
     "",
-    "Jakarta",
+    "Semarang",
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "London, UK",
+    "Japan",
+    "University of Tokyo",
+    "Universitas Indonesia"
    ],
    [
     "2023",
@@ -807,7 +990,10 @@
     "",
     "",
     "1/2/1998",
-    "Jakarta"
+    "Jakarta Selatan",
+    "United Kingdom",
+    "University of Edinburgh",
+    "Universitas Indonesia"
    ],
    [
     "2025",
@@ -1000,7 +1186,10 @@
     "is_selected_mentor",
     "full_name",
     "linkedin",
-    "bachelor_country"
+    "bachelor_country",
+    "master_country",
+    "master_institution",
+    "master_area_of_study"
    ],
    [
     "2020",
@@ -1009,7 +1198,10 @@
     "TRUE",
     "Maya Pratama",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ],
    [
     "2021",
@@ -1018,7 +1210,10 @@
     "TRUE",
     "Nanda Santoso",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Netherlands",
+    "TU Delft",
+    "Engineering"
    ],
    [
     "2022",
@@ -1027,7 +1222,10 @@
     "TRUE",
     "Oka Nugroho",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Amerika Serikat",
+    "Columbia University",
+    "Public Policy"
    ],
    [
     "2023",
@@ -1036,7 +1234,10 @@
     "TRUE",
     "Putri Wijaya",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Australia",
+    "ANU",
+    "Public Policy"
    ],
    [
     "2024",
@@ -1045,7 +1246,10 @@
     "TRUE",
     "Raka Rahman",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Germany",
+    "TU Munich",
+    "Engineering"
    ],
    [
     "2020",
@@ -1054,7 +1258,10 @@
     "TRUE",
     "Sari Hidayat",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ],
    [
     "2021",
@@ -1063,7 +1270,10 @@
     "TRUE",
     "Tegar Saputra",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Netherlands",
+    "TU Delft",
+    "Engineering"
    ],
    [
     "2022",
@@ -1072,7 +1282,10 @@
     "TRUE",
     "Utami Permata",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Amerika Serikat",
+    "Columbia University",
+    "Public Policy"
    ],
    [
     "2023",
@@ -1081,7 +1294,10 @@
     "TRUE",
     "Vino Kusuma",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Australia",
+    "ANU",
+    "Public Policy"
    ],
    [
     "2024",
@@ -1090,7 +1306,10 @@
     "TRUE",
     "Wulan Lestari",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Germany",
+    "TU Munich",
+    "Engineering"
    ],
    [
     "2020",
@@ -1099,7 +1318,10 @@
     "TRUE",
     "Yoga Pratama",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ],
    [
     "2021",
@@ -1108,7 +1330,10 @@
     "TRUE",
     "Zahra Santoso",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Netherlands",
+    "TU Delft",
+    "Engineering"
    ],
    [
     "2022",
@@ -1117,7 +1342,10 @@
     "TRUE",
     "Ayu Nugroho",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Amerika Serikat",
+    "Columbia University",
+    "Public Policy"
    ],
    [
     "2023",
@@ -1126,7 +1354,10 @@
     "TRUE",
     "Budi Wijaya",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Australia",
+    "ANU",
+    "Public Policy"
    ],
    [
     "2024",
@@ -1135,7 +1366,10 @@
     "TRUE",
     "Citra Rahman",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Germany",
+    "TU Munich",
+    "Engineering"
    ],
    [
     "2020",
@@ -1144,7 +1378,10 @@
     "TRUE",
     "Dimas Hidayat",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ],
    [
     "2021",
@@ -1153,7 +1390,10 @@
     "TRUE",
     "Eka Saputra",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Netherlands",
+    "TU Delft",
+    "Engineering"
    ],
    [
     "2022",
@@ -1162,7 +1402,10 @@
     "TRUE",
     "Fajar Permata",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Amerika Serikat",
+    "Columbia University",
+    "Public Policy"
    ],
    [
     "2023",
@@ -1171,7 +1414,10 @@
     "TRUE",
     "Gita Kusuma",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Australia",
+    "ANU",
+    "Public Policy"
    ],
    [
     "2024",
@@ -1180,7 +1426,10 @@
     "TRUE",
     "Hadi Lestari",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Germany",
+    "TU Munich",
+    "Engineering"
    ],
    [
     "2020",
@@ -1189,7 +1438,10 @@
     "TRUE",
     "Intan Pratama",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ],
    [
     "2021",
@@ -1198,7 +1450,10 @@
     "TRUE",
     "Joko Santoso",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Netherlands",
+    "TU Delft",
+    "Engineering"
    ],
    [
     "2022",
@@ -1207,7 +1462,10 @@
     "TRUE",
     "Kirana Nugroho",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Amerika Serikat",
+    "Columbia University",
+    "Public Policy"
    ],
    [
     "2023",
@@ -1216,7 +1474,10 @@
     "TRUE",
     "Lukman Wijaya",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Australia",
+    "ANU",
+    "Public Policy"
    ],
    [
     "2024",
@@ -1225,7 +1486,10 @@
     "TRUE",
     "Maya Rahman",
     "",
-    "Indonesia"
+    "Indonesia",
+    "Germany",
+    "TU Munich",
+    "Engineering"
    ],
    [
     "2024",
@@ -1234,7 +1498,10 @@
     "TRUE",
     "Dimas Wijaya",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ],
    [
     "2019",
@@ -1243,7 +1510,10 @@
     "TRUE",
     "Gita Saputra",
     "",
-    "Indonesia"
+    "Indonesia",
+    "United Kingdom",
+    "University of Oxford",
+    "Economics"
    ]
   ]
  }

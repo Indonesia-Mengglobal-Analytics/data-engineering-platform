@@ -476,3 +476,27 @@ a.cite:hover { background: var(--primary); color: #fff; text-decoration: none; }
 .stack-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 table.heat th, table.heat td { padding: 6px 8px; }
 table.heat thead th { white-space: normal; min-width: 64px; font-weight: 500; }
+
+/* people gold */
+.gold-filters { margin-bottom: 16px; display: grid; gap: 10px; }
+.gold-filters .frow { display: flex; gap: 12px; align-items: baseline; }
+.gold-filters .flabel { width: 64px; flex: none; color: var(--text-muted); font-size: 12px; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; color: var(--text); text-decoration: none; background: var(--bg); }
+.pill:hover { border-color: var(--primary); }
+.pill.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.dash-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1100px) { .dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dash-grid .widget { grid-column: span 2; } }
+@media (min-width: 1101px) { .dash-grid .widget.w2 { grid-column: span 2; } }
+.graph-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; }
+.graph-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.pgraph { width: 100%; touch-action: none; }
+.pgraph line { stroke: var(--text-muted); stroke-opacity: .28; }
+.pgraph text { font-size: 11px; fill: var(--text); pointer-events: none; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+.pgraph .g-node { cursor: grab; }
+.pgraph circle { stroke: var(--bg); stroke-width: 2px; }
+.pgraph svg.focus line { stroke-opacity: .06; }
+.pgraph svg.focus line.on { stroke-opacity: .7; stroke: var(--primary); }
+.pgraph svg.focus .g-node { opacity: .25; }
+.pgraph svg.focus .g-node.on { opacity: 1; }
+@media (max-width: 640px) { .gold-filters .frow { flex-direction: column; gap: 4px; } }

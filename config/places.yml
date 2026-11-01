@@ -1,0 +1,88 @@
+# Place names for the people gold table. Free-text answers ("Jaksel", "Kota Bandung, Jabar",
+# "Yogyakarta / DIY", "London, UK") are matched against these aliases, case and punctuation
+# ignored. Add an alias when a common spelling shows up as "unmatched" in people.gold_people.
+
+# Indonesian provinces: island region, aliases, and cities/regencies inside them.
+provinces:
+  Aceh: {region: Sumatra, aliases: [aceh, nad, nanggroe aceh darussalam], cities: [banda aceh, lhokseumawe, langsa, sabang, meulaboh]}
+  Sumatera Utara: {region: Sumatra, aliases: [sumatera utara, sumatra utara, sumut, north sumatra, north sumatera], cities: [medan, binjai, pematangsiantar, siantar, tebing tinggi, sibolga, padangsidimpuan, deli serdang, toba, samosir, nias]}
+  Sumatera Barat: {region: Sumatra, aliases: [sumatera barat, sumatra barat, sumbar, west sumatra, west sumatera], cities: [padang, bukittinggi, payakumbuh, solok, pariaman, padang panjang, sawahlunto, agam]}
+  Riau: {region: Sumatra, aliases: [riau], cities: [pekanbaru, dumai, kampar, siak, indragiri]}
+  Kepulauan Riau: {region: Sumatra, aliases: [kepulauan riau, kepri, riau islands], cities: [batam, tanjung pinang, tanjungpinang, bintan, karimun]}
+  Jambi: {region: Sumatra, aliases: [jambi], cities: [sungai penuh, muaro jambi]}
+  Sumatera Selatan: {region: Sumatra, aliases: [sumatera selatan, sumatra selatan, sumsel, south sumatra, south sumatera], cities: [palembang, prabumulih, lubuklinggau, pagar alam, ogan ilir, ogan komering]}
+  Bangka Belitung: {region: Sumatra, aliases: [bangka belitung, kepulauan bangka belitung, babel], cities: [pangkal pinang, pangkalpinang, bangka, belitung]}
+  Bengkulu: {region: Sumatra, aliases: [bengkulu], cities: [rejang lebong]}
+  Lampung: {region: Sumatra, aliases: [lampung], cities: [bandar lampung, bandarlampung, metro, pringsewu]}
+  DKI Jakarta: {region: Java, aliases: [dki jakarta, jakarta, dki, daerah khusus ibukota jakarta, jkt], cities: [jakarta selatan, jakarta pusat, jakarta barat, jakarta timur, jakarta utara, jaksel, jakpus, jakbar, jaktim, jakut, kepulauan seribu]}
+  Banten: {region: Java, aliases: [banten], cities: [tangerang, tangerang selatan, tangsel, south tangerang, serang, cilegon, pandeglang, lebak, bintaro, bsd, serpong]}
+  Jawa Barat: {region: Java, aliases: [jawa barat, jabar, west java], cities: [bandung, bekasi, bogor, depok, cimahi, cirebon, sukabumi, tasikmalaya, karawang, purwakarta, subang, garut, sumedang, cianjur, indramayu, majalengka, kuningan, ciamis, banjar, jatinangor, cikarang, cibinong]}
+  Jawa Tengah: {region: Java, aliases: [jawa tengah, jateng, central java], cities: [semarang, surakarta, solo, salatiga, magelang, pekalongan, tegal, purwokerto, banyumas, kudus, jepara, klaten, boyolali, sukoharjo, karanganyar, sragen, wonogiri, pati, rembang, blora, cilacap, kebumen, purworejo, wonosobo, temanggung, kendal, demak, grobogan, brebes, pemalang, batang, purbalingga, banjarnegara]}
+  DI Yogyakarta: {region: Java, aliases: [di yogyakarta, daerah istimewa yogyakarta, diy, yogyakarta, jogja, jogjakarta, yogya, special region of yogyakarta], cities: [sleman, bantul, gunungkidul, gunung kidul, kulon progo, kulonprogo]}
+  Jawa Timur: {region: Java, aliases: [jawa timur, jatim, east java], cities: [surabaya, malang, sidoarjo, gresik, kediri, madiun, blitar, mojokerto, pasuruan, probolinggo, batu, jember, banyuwangi, lamongan, tuban, bojonegoro, jombang, nganjuk, ponorogo, tulungagung, trenggalek, pacitan, ngawi, magetan, lumajang, situbondo, bondowoso, bangkalan, sampang, pamekasan, sumenep, madura]}
+  Bali: {region: Bali & Nusa Tenggara, aliases: [bali], cities: [denpasar, badung, gianyar, tabanan, buleleng, singaraja, klungkung, karangasem, jembrana, bangli, kuta, ubud]}
+  Nusa Tenggara Barat: {region: Bali & Nusa Tenggara, aliases: [nusa tenggara barat, ntb, west nusa tenggara], cities: [mataram, lombok, bima, sumbawa, dompu]}
+  Nusa Tenggara Timur: {region: Bali & Nusa Tenggara, aliases: [nusa tenggara timur, ntt, east nusa tenggara], cities: [kupang, ende, maumere, flores, sumba, labuan bajo, atambua, ruteng]}
+  Kalimantan Barat: {region: Kalimantan, aliases: [kalimantan barat, kalbar, west kalimantan], cities: [pontianak, singkawang, ketapang, sintang]}
+  Kalimantan Tengah: {region: Kalimantan, aliases: [kalimantan tengah, kalteng, central kalimantan], cities: [palangka raya, palangkaraya, sampit, kotawaringin]}
+  Kalimantan Selatan: {region: Kalimantan, aliases: [kalimantan selatan, kalsel, south kalimantan], cities: [banjarmasin, banjarbaru, martapura]}
+  Kalimantan Timur: {region: Kalimantan, aliases: [kalimantan timur, kaltim, east kalimantan], cities: [samarinda, balikpapan, bontang, kutai, kutai kartanegara, nusantara, ikn]}
+  Kalimantan Utara: {region: Kalimantan, aliases: [kalimantan utara, kaltara, north kalimantan], cities: [tarakan, tanjung selor, nunukan, malinau]}
+  Sulawesi Utara: {region: Sulawesi, aliases: [sulawesi utara, sulut, north sulawesi], cities: [manado, bitung, tomohon, kotamobagu, minahasa]}
+  Gorontalo: {region: Sulawesi, aliases: [gorontalo]}
+  Sulawesi Tengah: {region: Sulawesi, aliases: [sulawesi tengah, sulteng, central sulawesi], cities: [palu, poso, luwuk, banggai]}
+  Sulawesi Barat: {region: Sulawesi, aliases: [sulawesi barat, sulbar, west sulawesi], cities: [mamuju, majene, polewali]}
+  Sulawesi Selatan: {region: Sulawesi, aliases: [sulawesi selatan, sulsel, south sulawesi], cities: [makassar, parepare, palopo, gowa, maros, bone, bulukumba, toraja, sidrap]}
+  Sulawesi Tenggara: {region: Sulawesi, aliases: [sulawesi tenggara, sultra, southeast sulawesi], cities: [kendari, baubau, kolaka]}
+  Maluku: {region: Maluku, aliases: [maluku], cities: [ambon, tual, seram]}
+  Maluku Utara: {region: Maluku, aliases: [maluku utara, malut, north maluku], cities: [ternate, tidore, sofifi, halmahera]}
+  Papua: {region: Papua, aliases: [papua], cities: [jayapura, sentani, biak, keerom]}
+  Papua Barat: {region: Papua, aliases: [papua barat, west papua], cities: [manokwari, fakfak, kaimana]}
+  Papua Barat Daya: {region: Papua, aliases: [papua barat daya, southwest papua], cities: [sorong, raja ampat]}
+  Papua Tengah: {region: Papua, aliases: [papua tengah, central papua], cities: [nabire, timika, mimika]}
+  Papua Pegunungan: {region: Papua, aliases: [papua pegunungan, highland papua], cities: [wamena, jayawijaya]}
+  Papua Selatan: {region: Papua, aliases: [papua selatan, south papua], cities: [merauke]}
+
+# Countries: canonical name, world region, aliases (English, Bahasa Indonesia, codes).
+countries:
+  Indonesia: {region: Southeast Asia, aliases: [indonesia, id, idn, ri, republik indonesia]}
+  Singapore: {region: Southeast Asia, aliases: [singapore, singapura, sg]}
+  Malaysia: {region: Southeast Asia, aliases: [malaysia, my, kuala lumpur]}
+  Thailand: {region: Southeast Asia, aliases: [thailand, bangkok]}
+  Philippines: {region: Southeast Asia, aliases: [philippines, filipina, manila]}
+  Vietnam: {region: Southeast Asia, aliases: [vietnam, viet nam]}
+  Brunei: {region: Southeast Asia, aliases: [brunei, brunei darussalam]}
+  Japan: {region: East Asia, aliases: [japan, jepang, tokyo, kyoto, osaka, jp]}
+  South Korea: {region: East Asia, aliases: [south korea, korea selatan, korea, republic of korea, seoul, kr]}
+  China: {region: East Asia, aliases: [china, tiongkok, cina, prc, beijing, shanghai]}
+  Hong Kong: {region: East Asia, aliases: [hong kong, hongkong, hk]}
+  Taiwan: {region: East Asia, aliases: [taiwan, taipei]}
+  India: {region: South Asia, aliases: [india]}
+  United Kingdom: {region: Europe, aliases: [united kingdom, uk, u k, inggris, england, great britain, britain, scotland, wales, london, edinburgh, manchester, oxford, cambridge uk, gb]}
+  Netherlands: {region: Europe, aliases: [netherlands, the netherlands, belanda, holland, nederland, amsterdam, delft, leiden, utrecht, rotterdam, groningen, wageningen, nl]}
+  Germany: {region: Europe, aliases: [germany, jerman, deutschland, berlin, munich, munchen, de]}
+  France: {region: Europe, aliases: [france, perancis, prancis, paris]}
+  Belgium: {region: Europe, aliases: [belgium, belgia, leuven, brussels]}
+  Switzerland: {region: Europe, aliases: [switzerland, swiss, swiss confederation, zurich, swiss federal, geneva]}
+  Austria: {region: Europe, aliases: [austria, vienna, wina]}
+  Sweden: {region: Europe, aliases: [sweden, swedia, stockholm, lund]}
+  Denmark: {region: Europe, aliases: [denmark, denmark kingdom, copenhagen, denmark dk]}
+  Norway: {region: Europe, aliases: [norway, norwegia, oslo]}
+  Finland: {region: Europe, aliases: [finland, finlandia, helsinki]}
+  Ireland: {region: Europe, aliases: [ireland, irlandia, dublin]}
+  Italy: {region: Europe, aliases: [italy, italia, milan, rome]}
+  Spain: {region: Europe, aliases: [spain, spanyol, madrid, barcelona]}
+  Portugal: {region: Europe, aliases: [portugal, lisbon]}
+  Hungary: {region: Europe, aliases: [hungary, hungaria, budapest]}
+  Czech Republic: {region: Europe, aliases: [czech republic, czechia, ceko, prague]}
+  Poland: {region: Europe, aliases: [poland, polandia, warsaw]}
+  Russia: {region: Europe, aliases: [russia, rusia, moscow]}
+  Turkey: {region: Middle East, aliases: [turkey, turki, turkiye, istanbul, ankara]}
+  Saudi Arabia: {region: Middle East, aliases: [saudi arabia, arab saudi, saudi, riyadh, jeddah]}
+  United Arab Emirates: {region: Middle East, aliases: [united arab emirates, uae, uni emirat arab, dubai, abu dhabi]}
+  Qatar: {region: Middle East, aliases: [qatar, doha]}
+  Egypt: {region: Middle East, aliases: [egypt, mesir, cairo]}
+  United States: {region: North America, aliases: [united states, united states of america, usa, us, u s, u s a, amerika, amerika serikat, as, america]}
+  Canada: {region: North America, aliases: [canada, kanada, toronto, vancouver, montreal]}
+  Australia: {region: Oceania, aliases: [australia, sydney, melbourne, brisbane, perth, canberra, adelaide, au]}
+  New Zealand: {region: Oceania, aliases: [new zealand, selandia baru, nz, auckland, wellington]}

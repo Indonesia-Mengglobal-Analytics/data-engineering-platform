@@ -38,7 +38,8 @@ class QueryError(Exception):
     pass
 
 
-PEOPLE_TABLES = ("people", "activities", "records", "anomalies", "review", "sources")
+PEOPLE_TABLES = ("people", "activities", "records", "anomalies", "review", "sources", "gold_people", "mentorships", "events",
+                 "graph_nodes", "graph_edges")
 
 
 def check_sql(con, sql: str) -> str:

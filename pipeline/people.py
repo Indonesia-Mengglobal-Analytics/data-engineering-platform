@@ -180,6 +180,7 @@ class Record:
     year: int | None
     event: str | None = None
     linkedin: str | None = None
+    attrs: dict = field(default_factory=dict)
     source_has_name: bool = True
     email: str | None = None
     name: str | None = None
@@ -210,7 +211,13 @@ def _pick(row: list, idx: dict[str, int], names: list[str]):
     return None
 
 
-def extract(source: dict, rows: list[list], cols: dict, min_year: int, max_year: int) -> tuple[list[Record], dict]:
+def attribute_columns(source: dict, attributes: dict) -> dict[str, list[str]]:
+    """Profile field -> candidate headers; a source can override them (attributes: in its config)."""
+    return {**attributes, **{k: (v if isinstance(v, list) else [v]) for k, v in (source.get("attributes") or {}).items()}}
+
+
+def extract(source: dict, rows: list[list], cols: dict, min_year: int, max_year: int,
+            attributes: dict | None = None) -> tuple[list[Record], dict]:
     """Rows of one source tab (header first) -> records, plus source-level facts."""
     hr = int(source.get("header_row", 1))
     if len(rows) < hr:
@@ -220,6 +227,7 @@ def extract(source: dict, rows: list[list], cols: dict, min_year: int, max_year:
     facts = {"header": header, "rows": 0, "dummy_columns": [h for h in header if "dummy" in h.lower()]}
     roles = {k.lower(): v for k, v in (source.get("roles") or {}).items()}
     year_cols = ([source["year_column"]] if source.get("year_column") else []) + cols["year"] + ["timestamp"]
+    attr_cols = attribute_columns(source, attributes or {})
     out = []
     for n, row in enumerate(rows[hr:], start=hr + 1):
         if not any(str(v).strip() for v in row):
@@ -238,7 +246,8 @@ def extract(source: dict, rows: list[list], cols: dict, min_year: int, max_year:
                      email_raw=_pick(row, idx, cols["email"]), name_raw=_pick(row, idx, cols["full_name"]),
                      phone_raw=_pick(row, idx, cols["phone"]), year=year,
                      event=_pick(row, idx, [source["event_column"]]) if source.get("event_column") else None,
-                     linkedin=_pick(row, idx, cols["linkedin"]))
+                     linkedin=_pick(row, idx, cols["linkedin"]),
+                     attrs={a: _pick(row, idx, names) for a, names in attr_cols.items()})
         out.append(rec)
     return out, facts
 
@@ -362,7 +371,8 @@ def resolve(records: list[Record]) -> dict:
     return {"people": people, "activities": list(activities.values()), "review": review}
 
 
-def run_checks(sources: list[dict], tabs: dict, cols: dict, min_year: int, max_year: int) -> tuple[list[Record], list[dict]]:
+def run_checks(sources: list[dict], tabs: dict, cols: dict, min_year: int, max_year: int,
+               attributes: dict | None = None) -> tuple[list[Record], list[dict]]:
     """tabs: source key -> rows (or an Exception). Returns records and the source inventory."""
     records, inventory = [], []
     for s in sources:
@@ -373,15 +383,15 @@ def run_checks(sources: list[dict], tabs: dict, cols: dict, min_year: int, max_y
             entry.update({"status": "unreachable", "error": str(data) if data else "not read", "rows": 0})
             inventory.append(entry)
             continue
-        recs, facts = extract(s, data, cols, min_year, max_year)
+        recs, facts = extract(s, data, cols, min_year, max_year, attributes)
         has_name = any(h.strip().lower() in [c.lower() for c in cols["full_name"]] for h in facts["header"])
         for r in recs:
             r.source_has_name = has_name
             check(r, min_year, max_year)
             if facts["dummy_columns"]:
                 r.anomalies.append("dummy_source_column")
-        mapped = {k: next((h for h in facts["header"] if h.strip().lower() in [c.lower() for c in v]), None)
-                  for k, v in cols.items()}
+        mapped = {k: next((h for h in facts["header"] if re.sub(r"\s+", " ", h).strip().lower() in [c.lower() for c in v]), None)
+                  for k, v in {**cols, **attribute_columns(s, attributes or {})}.items()}
         entry.update({"status": "read", "rows": facts["rows"], "records": len(recs),
                       "excluded": sum(1 for r in recs if r.excluded), "mapped_columns": mapped,
                       "dummy_columns": facts["dummy_columns"]})

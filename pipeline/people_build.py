@@ -28,13 +28,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 import knowledge  # noqa: E402
 import lakehouse  # noqa: E402
 import people as P  # noqa: E402
+import people_gold as G  # noqa: E402
 from exports import GoogleSheets, LocalSheets, table  # noqa: E402
 from seal import Sealer, unseal  # noqa: E402
 from sources import GoogleSource  # noqa: E402
 from storage import DriveStorage, LocalStorage  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-TASK_KEYS = ("read", "normalize", "resolve", "build", "store", "publish")
+TASK_KEYS = ("read", "normalize", "resolve", "gold", "build", "store", "publish")
 K = 5  # small-group rule for people counts on the site
 MAX_RUNS = 50
 
@@ -207,6 +208,47 @@ def write_tables(con, records, result, inventory) -> None:
         for s in inventory])
 
 
+def pairing_tabs(pairings: list[dict]) -> list[dict]:
+    """The tabs the pairing sources need: the pairs, and the id lookup tabs (key__mentor, key__mentee)."""
+    out = []
+    for s in pairings:
+        out.append({"key": s["key"], "spreadsheet_id": s["spreadsheet_id"], "tab": s["tab"]})
+        for side, lk in (s.get("lookups") or {}).items():
+            out.append({"key": f"{s['key']}__{side}", "spreadsheet_id": s["spreadsheet_id"], "tab": lk["tab"]})
+    return out
+
+
+def write_gold(con, built: dict, mentorships: list[dict]) -> None:
+    gold = built["gold"]
+    cols = list(gold[0].keys()) if gold else ["person_id"]
+    types = {bool: "BOOLEAN", int: "INTEGER"}
+    sample = gold[0] if gold else {}
+    defs = ", ".join(f'"{c}" {types.get(type(sample.get(c)), "VARCHAR")}' for c in cols)
+    con.execute(f"CREATE OR REPLACE TABLE people.gold_people ({defs})")
+    if gold:
+        con.executemany(f"INSERT INTO people.gold_people VALUES ({','.join('?' * len(cols))})", [[g[c] for c in cols] for g in gold])
+    names = {g["person_id"]: (g["full_name"], g["email"]) for g in gold}
+    con.execute("""CREATE OR REPLACE TABLE people.mentorships (mentorship_id VARCHAR, program VARCHAR, year INTEGER, mentor_id VARCHAR,
+                   mentor_name VARCHAR, mentor_email VARCHAR, mentee_id VARCHAR, mentee_name VARCHAR, mentee_email VARCHAR,
+                   "group" VARCHAR, match VARCHAR, source VARCHAR)""")
+    con.executemany("INSERT INTO people.mentorships VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
+        [m["mentorship_id"], m["program"], m["year"], m["mentor_id"], *names.get(m["mentor_id"], (None, None)),
+         m["mentee_id"], *names.get(m["mentee_id"], (None, None)), m["group"], m["match"], m["source"]] for m in mentorships])
+    con.execute("""CREATE OR REPLACE TABLE people.events (event_id VARCHAR, event_name VARCHAR, event_year INTEGER,
+                   participants INTEGER, speakers INTEGER, committee INTEGER)""")
+    con.executemany("INSERT INTO people.events VALUES (?,?,?,?,?,?)", [
+        [e["event_id"], e["event_name"], e["event_year"], e["participants"], e["speakers"], e["committee"]] for e in built["events"]])
+    con.execute("""CREATE OR REPLACE TABLE people.graph_nodes (node_id VARCHAR, node_type VARCHAR, label VARCHAR, properties VARCHAR)""")
+    con.executemany("INSERT INTO people.graph_nodes VALUES (?,?,?,?)", [
+        [n["node_id"], n["node_type"], n["label"], json.dumps({k: v for k, v in n.items() if k not in ("node_id", "node_type", "label")})]
+        for n in built["nodes"]])
+    con.execute("""CREATE OR REPLACE TABLE people.graph_edges (src VARCHAR, dst VARCHAR, edge_type VARCHAR, year INTEGER, properties VARCHAR)""")
+    con.executemany("INSERT INTO people.graph_edges VALUES (?,?,?,?,?)", [
+        [e["src"], e["dst"], e["edge_type"], e.get("year"), json.dumps({k: v for k, v in e.items() if k not in ("src", "dst", "edge_type", "year")})]
+        for e in built["edges"]])
+
+
+GOLD_TABLES = ("gold_people", "mentorships", "events", "graph_nodes", "graph_edges")
 LABELS: dict = {}
 
 
@@ -273,22 +315,34 @@ def main() -> int:
 
         def read():
             if args.fixtures:
-                return read_fixtures(Path(args.fixtures), config["sources"])
+                return read_fixtures(Path(args.fixtures), config["sources"] + pairing_tabs(config.get("pairings", [])))
             if google is None:
                 raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is not set")
-            return read_google(google, config["sources"])
+            return read_google(google, config["sources"] + pairing_tabs(config.get("pairings", [])))
         tabs = step("read", read)
-        records, inventory = step("normalize", P.run_checks, config["sources"], tabs, config["columns"], min_year, max_year)
+        records, inventory = step("normalize", P.run_checks, config["sources"], tabs, config["columns"], min_year, max_year,
+                                  config.get("attributes", {}))
         result = step("resolve", P.resolve, records)
+
+        def gold():
+            places = G.Places(yaml.safe_load((ROOT / "config" / "places.yml").read_text()))
+            links, pair_inventory = G.read_pairings(config.get("pairings", []), tabs, result, records)
+            return G.build(records, result, links, places), links, pair_inventory
+        built, links, pair_inventory = step("gold", gold)
         payload = step("build", aggregates, records, result, inventory, config["labels"], config)
+        payload["gold"] = G.site_aggregates(built, links, pair_inventory, K)
 
         def store():
             write_tables(con, records, result, inventory)
+            write_gold(con, built, links)
             sizes = {f"people.{t}": lakehouse.save(con, storage, "people", t)
-                     for t in ("records", "people", "activities", "anomalies", "review", "sources")}
+                     for t in ("records", "people", "activities", "anomalies", "review", "sources") + GOLD_TABLES}
             link = None
             if writer is not None:
                 tabs_out = {
+                    "Gold": table(con, "SELECT * FROM people.gold_people ORDER BY full_name NULLS LAST"),
+                    "Mentorships": table(con, "SELECT * FROM people.mentorships ORDER BY program, year, mentor_name, mentee_name"),
+                    "Events": table(con, "SELECT * FROM people.events ORDER BY event_year DESC, participants DESC"),
                     "People": table(con, "SELECT * FROM people.people ORDER BY full_name NULLS LAST"),
                     "Activities": table(con, "SELECT * FROM people.activities ORDER BY person_id, activity_year, label"),
                     "Anomalies": table(con, "SELECT * FROM people.anomalies ORDER BY excluded DESC, rule, source, sheet_row"),
@@ -298,7 +352,10 @@ def main() -> int:
                               ["person key", "normalized email (Gmail dots and +tags removed); person_id is stable per email"],
                               ["not merged automatically", "same phone, same name, mentor and mentee in the same year: see Review"],
                               ["Review.decision", "note your decision here; to merge, fix the email in the source sheet (this tab is rewritten each run)"],
-                              ["labels", "from [Data-020] glossary; MASTER_* mirror PHD_* until the glossary defines them"]]),
+                              ["labels", "from [Data-020] glossary; MASTER_* mirror PHD_* until the glossary defines them"],
+                              ["Gold", "one row per person: roles, where they live (city, province, island region), birth place, study and target country, institution, events attended, mentees mentored"],
+                              ["Mentorships", "mentor-mentee pairs from the pairing sheets; match = how each side was found (email, phone, name)"],
+                              ["graph", "people.graph_nodes and people.graph_edges in the lakehouse (SQL editor): ATTENDED, SPOKE_AT, MENTORED, LIVES_IN, BORN_IN, STUDIED_IN, TARGETS, STUDIED_AT, HAS_ROLE"]]),
                 }
                 link = writer.upsert("outputs", "PEOPLE", tabs_out)
             return {"bytes": sizes, "sheet": link, "kind": storage.kind}
@@ -306,6 +363,7 @@ def main() -> int:
         payload["outputs"] = {"sheet": stored["sheet"], "storage": stored["kind"]}
         run["status"] = "succeeded" if all(s["status"] == "read" for s in inventory) else "partial"
         run["summary"] = {k: payload["kpis"][k] for k in ("records", "excluded", "people", "merged_records", "review_items", "sources_read")}
+        run["summary"]["mentorships"] = len(links)
     except Exception as error:
         failed = error
         run.update({"status": "failed", "error": f"{type(error).__name__}: {error}"})

@@ -113,6 +113,41 @@ The site gets counts only, with groups under 5 shown as "<5".
 A source the service account can't open shows as **unreachable** on People → Sources; share it as Viewer. To add a source,
 add an entry to `config/people.yml` with its spreadsheet ID, tab, label and status (`header_row` when the header is not row 1).
 
+### People gold and the people graph
+
+The `gold` step turns the deduplicated people into **`people.gold_people`**, one row per person:
+
+| Group | Columns |
+|---|---|
+| Who | `person_id`, `full_name`, `email`, `phone`, `linkedin` |
+| Roles | `primary_role`, `roles`, `is_master_mentee`, `is_master_mentor`, `is_phd_mentee`, `is_phd_mentor`, `is_event_participant`, `is_event_speaker`, `is_event_committee`, `is_management_member`, `is_management_candidate`, `first_year`, `last_year` |
+| Where | `residence_city`, `residence_province`, `residence_island_region` (Java, Sumatra, …), `residence_country`, `birth_city`, `birth_province` |
+| Study | `study_country` (master's or PhD), `target_country`, `target_university`, `institution`, `area_of_study` |
+| Activity | `events_attended`, `events_spoken`, `mentees_mentored`, `mentors_had` |
+
+Free-text places ("Jaksel", "Kota Bandung, Jabar", "Jogja", "London, UK") are matched with `config/places.yml`
+(Indonesian provinces with their cities, island regions, countries with their Bahasa Indonesia names). The newest
+answer of a person wins. Add an alias there when a common spelling is left unmatched (`residence_raw` keeps the answer).
+
+Mentor–mentee pairs (`people.mentorships`) come from the pairing sheets under `pairings` in `config/people.yml`:
+the PhD bootcamp *final result* (by email) and the Master *mentee mentor pairing* (ids, resolved through the raw tabs by
+phone, else an exact name only one person with that role has). Ambiguous or unknown ids are counted, never guessed.
+
+The person-level graph is `people.graph_nodes` and `people.graph_edges`: people, events, cities, provinces, countries,
+institutions and roles, linked by `HAS_ROLE`, `ATTENDED`, `SPOKE_AT`, `ORGANIZED`, `MENTORED`, `LIVES_IN`, `BORN_IN`,
+`STUDIED_IN`, `STUDIED_AT`, `TARGETS` and `IN` (city → province → country). Query it in the SQL editor, for example
+everyone a mentor mentored:
+
+```sql
+SELECT n.label AS mentee, e.year FROM people.graph_edges e JOIN people.graph_nodes n ON n.node_id = e.dst
+WHERE e.edge_type = 'MENTORED' AND e.src = (SELECT person_id FROM people.gold_people WHERE email = 'mentor@example.com')
+```
+
+On the site, **People → People gold** filters by role and region where people live, and shows provinces, cities,
+birth provinces, study and target countries, institutions, events attended and mentees per mentor; **People → Graph**
+shows the community as a network of roles, regions, countries and events. Both are counts only, with groups under 5
+hidden. The gold table itself is the **Gold** tab of the PEOPLE sheet (plus **Mentorships** and **Events**).
+
 The two workflows deploy to the same Pages site. Each downloads the files the other published and carries them forward.
 Run the main pipeline once before the first people run.
 

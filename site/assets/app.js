@@ -9,6 +9,7 @@
     { key: "read", desc: "Read every people source in config/people.yml" },
     { key: "normalize", desc: "Clean emails, phones, names, years; flag anomalies" },
     { key: "resolve", desc: "Merge by normalized email; queue uncertain matches" },
+    { key: "gold", desc: "Profiles, places, events, mentor pairs, graph" },
     { key: "build", desc: "Counts, overlaps and journeys (groups under 5 hidden)" },
     { key: "store", desc: "people/*.parquet and the PEOPLE sheet" },
     { key: "publish", desc: "Encrypt aggregates, deploy to Pages" },
@@ -259,6 +260,8 @@
     if (sqlEl) mountSql(sqlEl);
     const askEl = $("#ask");
     if (askEl) mountAsk(askEl);
+    const graphEl = $("#pgraph");
+    if (graphEl) mountGraph(graphEl);
   }
 
   // ---------- pages ----------
@@ -1042,7 +1045,7 @@
     mentor_and_mentee_same_year: "Mentor and mentee in the same year. Kept as two roles; check it is right.",
   };
 
-  function peoplePage(tab = "overview", runId) {
+  function peoplePage(tab = "gold", runId) {
     const P = D.people;
     const actions = `<a class="btn" href="${esc(peopleWorkflowUrl())}" target="_blank" rel="noopener">${icon("play", 12)} Run people job</a>`;
     if (!P || !P.kpis) {
@@ -1051,8 +1054,8 @@
         (failed ? `<div class="callout danger"><b>Last run ${esc(failed.status)}.</b> <code>${esc(failed.error || "")}</code></div>` : "") +
         `<div class="empty"><h2>Not built yet</h2><p class="muted">Run <b>People dataset</b> in GitHub Actions once. It needs the service account to have access to the sources in <code>config/people.yml</code>.</p></div>`;
     }
-    const tabs = [["overview", "Overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
-    const body = { overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
+    const tabs = [["gold", "People gold"], ["graph", "Graph"], ["overview", "Dedup overview"], ["anomalies", "Anomalies & review"], ["sources", "Sources"], ["runs", "Runs"]];
+    const body = { gold: peopleGold, graph: peopleGraph, overview: peopleOverview, anomalies: peopleAnomalies, sources: peopleSources, runs: peopleRuns }[tab];
     if (!body) return notFound();
     const sheet = P.outputs?.sheet;
     return head("People dataset", `One row per person across mentorship (Master and PhD), events and management. Built ${esc(ago(P.generated_at))}.`,
@@ -1064,6 +1067,169 @@
     const sum = domains.reduce((a, d) => a + (y[d] || 0), 0);
     const hidden = domains.some((d) => d in y && y[d] == null);
     return hidden ? (sum ? `${fmtInt(sum)} +` : "<5") : fmtInt(sum);
+  }
+
+  // ---------- people gold ----------
+  const ROLE_NAMES = {
+    ALL: "Everyone", MASTER_MENTEE: "Master mentees", MASTER_MENTOR: "Master mentors", PHD_MENTEE: "PhD mentees", PHD_MENTOR: "PhD mentors",
+    EVENT_PARTICIPANT: "Event participants", EVENT_SPEAKER: "Speakers", EVENT_COMMITTEE: "Event committee",
+    MANAGEMENT_MEMBER: "Management", MANAGEMENT_CANDIDATE: "Management applicants",
+  };
+  const roleName = (r) => ROLE_NAMES[r] || r;
+  const hashParams = () => new URLSearchParams(location.hash.split("?")[1] || "");
+
+  function peopleGold(P) {
+    const G = P.gold;
+    if (!G) return `<div class="empty"><h2>No gold table yet</h2><p class="muted">Run the people job once more to build it.</p></div>`;
+    const q = hashParams();
+    const role = G.roles.includes(q.get("role")) ? q.get("role") : "ALL";
+    const region = G.regions.includes(q.get("region")) ? q.get("region") : "ALL";
+    const link = (r, g) => `#/people/gold?role=${encodeURIComponent(r)}&region=${encodeURIComponent(g)}`;
+    const S = G.slices[`${role}|${region}`] || {};
+    const k = P.rules.min_group_size;
+    const pills = (items, current, href, label) => `<div class="pills">${items.map((x) => `<a class="pill ${x === current ? "active" : ""}" href="${href(x)}">${esc(label(x))}</a>`).join("")}</div>`;
+    const filters = `<div class="card gold-filters">
+        <div class="frow"><span class="flabel">Role</span>${pills(G.roles, role, (r) => link(r, region), roleName)}</div>
+        <div class="frow"><span class="flabel">Lives in</span>${pills(G.regions, region, (g) => link(role, g), (g) => g === "ALL" ? "Anywhere" : g)}</div></div>`;
+    if (S.people == null || !S.province) {
+      const where = `${esc(roleName(role))} living in ${esc(region === "ALL" ? "any region" : region)}`;
+      return filters + (S.people == null
+        ? `<div class="empty"><h2>Fewer than ${k} people</h2><p class="muted">${where}: too few to show without pointing at individuals.</p></div>`
+        : `<div class="empty"><h2>No one</h2><p class="muted">No ${where.charAt(0).toLowerCase() + where.slice(1)} in the data.</p></div>`);
+    }
+    const stat = (label, value, sub) => `<div class="card stat"><div class="label">${label}</div><div class="value">${value}</div><div class="muted small">${sub}</div></div>`;
+    const avg = S.event_goers ? (S.events_attended_total / S.event_goers).toFixed(1) : null;
+    const widget = (title, dist, sub, color, note = "") => {
+      const vals = dist?.values || [];
+      return `<div class="widget w2"><h3>${title}</h3><div class="sub">${sub}${dist?.known != null ? ` · known for ${fmtInt(dist.known)}` : ""}</div>
+        ${vals.length ? hbar(vals, color) : `<p class="muted small">Not enough answers to show.</p>`}${note}</div>`;
+    };
+    const isMentor = role.endsWith("MENTOR"), isMentee = role.endsWith("MENTEE");
+    const sql = (title, query) => `<li><a href="${esc(sqlLink(query))}">${esc(title)}</a></li>`;
+    const roleCol = role === "ALL" ? "" : `is_${role.toLowerCase()}`;
+    const where = [roleCol, region === "ALL" ? "" : region === "Abroad" ? "residence_country <> 'Indonesia'" : `residence_island_region = '${region.replace(/'/g, "''")}'`].filter(Boolean);
+    const W = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+    return filters + `
+      <div class="grid grid-4" style="margin-bottom:16px">
+        ${stat(esc(roleName(role)), fmtInt(S.people), region === "ALL" ? "in the people gold table" : `living in ${esc(region)}`)}
+        ${stat("Went to an event", n5(S.event_goers), avg ? `${avg} events each on average` : "IM events with a participant list")}
+        ${stat("Mentored someone", n5(S.mentors_with_mentees), S.mentees_total != null ? `${fmtInt(S.mentees_total)} mentees in the pairing sheets` : "from the pairing sheets")}
+        ${stat("With more than one role", n5((S.n_roles || []).filter((b) => b.value !== "1 role").reduce((a, b) => (a == null || b.count == null ? null : a + b.count), 0)), "e.g. mentee who became mentor")}
+      </div>
+      <div class="dash-grid" style="margin-bottom:16px">
+        ${widget("Province", S.province, "Where they live now", "--c1")}
+        ${widget("City", S.city, "Where they live now", "--c2")}
+        ${widget("Born in", S.birth_province, "Province of birth", "--c3")}
+        ${isMentee ? widget("Target country", S.target_country, "Where they want to study", "--c4") : widget("Studied in", S.study_country, "Country of their master's or PhD", "--c4")}
+        ${isMentor ? "" : widget(isMentee ? "Studied in" : "Target country", isMentee ? S.study_country : S.target_country, isMentee ? "Country of an earlier degree" : "Mentees: where they want to study", "--c5")}
+        ${widget("Institution", S.institution, "Latest university", "--c6")}
+        ${widget("Area of study", S.area_of_study, "As answered", "--c7")}
+        ${widget("Events attended", { values: S.events_hist }, "People by number of IM events attended", "--c8")}
+        ${widget("Mentees per mentor", { values: S.mentees_hist }, "Mentors with at least one pair", "--c1")}
+        ${widget("Lives abroad", S.abroad_country, "Country of residence outside Indonesia", "--c10")}
+      </div>
+      <div class="grid grid-2">
+        <div class="card"><h3>Events with the most people</h3><div class="sub muted small" style="margin-bottom:8px">All roles; events with fewer than ${k} people are not listed.</div>
+          ${G.events.length ? `<div class="table-wrap"><table><thead><tr><th>Event</th><th>Year</th><th class="num">Participants</th><th class="num">Speakers</th></tr></thead><tbody>
+          ${G.events.map((e) => `<tr><td>${esc(e.event)}</td><td>${esc(e.year ?? "–")}</td><td class="num">${n5(e.participants)}</td><td class="num">${n5(e.speakers)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">None yet.</p>`}</div>
+        <div class="card"><h3>Mentor–mentee pairs</h3><dl class="kv">
+          ${G.mentorship.by_program.map((b) => `<dt>${esc(b.program === "PHD" ? "PhD" : "Master")} ${esc(b.year ?? "")}</dt><dd>${n5(b.pairs)} pairs</dd>`).join("")}
+          <dt>Matched by</dt><dd>${Object.entries(G.mentorship.by_match).map(([m, n]) => `${esc(m)} ${n5(n)}`).join(" · ") || "–"}</dd></dl>
+          <ul class="list-plain small" style="margin-top:8px">${G.mentorship.sources.map((s) => `<li>${badge(s.status === "read" ? "ok" : "unreachable", s.status)} ${esc(s.title)}: ${fmtInt(s.links)} pairs${s.unresolved && Object.keys(s.unresolved).length ? `, not linked: ${Object.entries(s.unresolved).map(([r, n]) => `${esc(r.replace(/_/g, " "))} ${fmtInt(n)}`).join(", ")}` : ""}</li>`).join("")}</ul>
+          <p class="muted small" style="margin:8px 0 0">A pair is linked by email, else a phone found once, else an exact name only one person with that role has. Anything else is left out, never guessed.</p></div>
+      </div>
+      <div class="card" style="margin-top:16px"><h3>See the people (PEOPLE sheet or SQL)</h3><p class="muted small">Names stay off this site. Open the <b>Gold</b> tab of the PEOPLE sheet, or run one of these in the SQL editor (the result opens as a preview sheet):</p>
+        <ul class="list-plain">
+          ${sql(`${roleName(role)}${region === "ALL" ? "" : ` in ${region}`}: name, city, events, mentees`, `SELECT full_name, email, residence_city, residence_province, primary_role, events_attended, mentees_mentored, study_country, target_country FROM people.gold_people${W} ORDER BY events_attended DESC, mentees_mentored DESC`)}
+          ${sql("Mentors and how many people they mentored", "SELECT mentor_name, mentor_email, program, count(*) AS mentees, string_agg(mentee_name, ', ') AS mentee_names FROM people.mentorships GROUP BY ALL ORDER BY mentees DESC")}
+          ${sql("People who attended 3 or more events", "SELECT full_name, email, residence_province, events_attended, roles FROM people.gold_people WHERE events_attended >= 3 ORDER BY events_attended DESC")}
+          ${sql("Mentees who later became mentors", "SELECT full_name, email, first_year, last_year, roles FROM people.gold_people WHERE (is_master_mentee AND is_master_mentor) OR (is_phd_mentee AND is_phd_mentor)")}
+          ${sql("People per province and role", "SELECT residence_province, primary_role, count(*) AS people FROM people.gold_people WHERE residence_province IS NOT NULL GROUP BY ALL ORDER BY people DESC")}
+          ${sql("Graph: everything linked to one person", "SELECT e.edge_type, e.year, n.node_type, n.label FROM people.graph_edges e JOIN people.graph_nodes n ON n.node_id = e.dst WHERE e.src = (SELECT person_id FROM people.gold_people WHERE full_name ILIKE '%name here%' LIMIT 1)")}
+        </ul></div>`;
+  }
+
+  // Aggregated network: roles, regions, countries, events. Edges carry people counts (>= k).
+  const GRAPH_COLORS = { role: "--c1", region: "--c3", country: "--c2", event: "--c6" };
+  const GRAPH_KIND_LABEL = { role: "Role", region: "Region where they live", country: "Country studied in or targeted", event: "Event" };
+  function peopleGraph(P) {
+    const g = P.gold?.graph;
+    if (!g || !g.nodes.length) return `<div class="empty"><h2>No graph yet</h2><p class="muted">Run the people job once more to build it.</p></div>`;
+    return `<div class="card"><h3>How the community connects</h3><div class="sub muted small" style="margin-bottom:8px">Circles are roles, regions, countries and events; their size is the number of people. Lines are people linking two circles (thicker = more), shown when at least ${P.rules.min_group_size}. Hover a circle to see its links; drag to rearrange.</div>
+        <div class="graph-legend small">${Object.entries(GRAPH_KIND_LABEL).map(([k, l]) => `<span><i style="background:var(${GRAPH_COLORS[k]})"></i>${l}</span>`).join("")}</div>
+        <div id="pgraph" class="pgraph"></div></div>
+      <div class="card" style="margin-top:16px"><h3>Links</h3><div class="table-wrap"><table><thead><tr><th>From</th><th>Link</th><th>To</th><th class="num">People</th></tr></thead><tbody>
+        ${[...g.edges].sort((a, b) => b.weight - a.weight).map((e) => `<tr><td>${esc(graphLabel(e.source))}</td><td class="muted">${esc(e.kind)}</td><td>${esc(graphLabel(e.target))}</td><td class="num">${fmtInt(e.weight)}</td></tr>`).join("")}
+      </tbody></table></div>
+      <p class="muted small" style="margin:8px 0 0">The person-level graph (who mentored whom, who attended what, who lives where) is in <code>people.graph_nodes</code> and <code>people.graph_edges</code>: query it from the SQL editor.</p></div>`;
+  }
+  function graphLabel(id) {
+    const [kind, ...rest] = id.split(":");
+    const v = rest.join(":");
+    return kind === "role" ? roleName(v) : v;
+  }
+
+  function mountGraph(el) {
+    const g = D.people?.gold?.graph;
+    if (!g) return;
+    const W = el.clientWidth || 900, H = Math.max(440, Math.min(640, W * 0.62));
+    const maxW = Math.max(1, ...g.nodes.map((n) => n.weight));
+    const nodes = g.nodes.map((n, i) => {
+      const a = (2 * Math.PI * i) / g.nodes.length;
+      return { ...n, r: 7 + 22 * Math.sqrt(n.weight / maxW), x: W / 2 + Math.cos(a) * W * 0.3, y: H / 2 + Math.sin(a) * H * 0.3, vx: 0, vy: 0 };
+    });
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const links = g.edges.map((e) => ({ ...e, s: byId.get(e.source), t: byId.get(e.target) })).filter((l) => l.s && l.t);
+    const maxE = Math.max(1, ...links.map((l) => l.weight));
+    // A small force simulation: repulsion, springs on links, a pull to the centre.
+    const tick = (alpha) => {
+      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        let dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy || 1;
+        const min = a.r + b.r + 26, f = (alpha * 9000) / d2;
+        const d = Math.sqrt(d2);
+        dx /= d; dy /= d;
+        const push = f + (d < min ? (min - d) * 0.5 : 0);
+        a.vx -= dx * push; a.vy -= dy * push; b.vx += dx * push; b.vy += dy * push;
+      }
+      for (const l of links) {
+        const dx = l.t.x - l.s.x, dy = l.t.y - l.s.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+        const want = 120 + l.s.r + l.t.r, f = ((d - want) / d) * 0.03 * alpha * (0.5 + l.weight / maxE);
+        l.s.vx += dx * f; l.s.vy += dy * f; l.t.vx -= dx * f; l.t.vy -= dy * f;
+      }
+      for (const n of nodes) {
+        if (n.fixed) { n.vx = n.vy = 0; continue; }
+        n.vx += (W / 2 - n.x) * 0.004 * alpha; n.vy += (H / 2 - n.y) * 0.008 * alpha;
+        n.x = Math.max(n.r + 4, Math.min(W - n.r - 4, n.x + (n.vx *= 0.6)));
+        n.y = Math.max(n.r + 4, Math.min(H - n.r - 4, n.y + (n.vy *= 0.6)));
+      }
+    };
+    for (let i = 0; i < 320; i++) tick(1 - i / 400);
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Network of roles, regions, countries and events">
+      <g class="g-links">${links.map((l, i) => `<line data-i="${i}" stroke-width="${(1 + 7 * l.weight / maxE).toFixed(1)}"><title>${esc(graphLabel(l.source))} ${esc(l.kind)} ${esc(graphLabel(l.target))}: ${fmtInt(l.weight)} people</title></line>`).join("")}</g>
+      <g class="g-nodes">${nodes.map((n, i) => `<g class="g-node" data-i="${i}"><circle r="${n.r.toFixed(1)}" fill="var(${GRAPH_COLORS[n.kind] || "--c9"})"><title>${esc(graphLabel(n.id))}: ${fmtInt(n.weight)} people</title></circle>
+        <text dy="${(n.r + 12).toFixed(1)}" text-anchor="middle">${esc(graphLabel(n.id))}</text></g>`).join("")}</g></svg>`;
+    const svg = el.querySelector("svg");
+    const lineEls = [...svg.querySelectorAll("line")], nodeEls = [...svg.querySelectorAll(".g-node")];
+    const draw = () => {
+      links.forEach((l, i) => { const e = lineEls[i]; e.setAttribute("x1", l.s.x); e.setAttribute("y1", l.s.y); e.setAttribute("x2", l.t.x); e.setAttribute("y2", l.t.y); });
+      nodes.forEach((n, i) => nodeEls[i].setAttribute("transform", `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`));
+    };
+    draw();
+    const focus = (n) => {
+      svg.classList.toggle("focus", !!n);
+      links.forEach((l, i) => lineEls[i].classList.toggle("on", !!n && (l.s === n || l.t === n)));
+      nodes.forEach((m, i) => nodeEls[i].classList.toggle("on", !!n && (m === n || links.some((l) => (l.s === n && l.t === m) || (l.t === n && l.s === m)))));
+    };
+    let drag = null;
+    const pt = (e) => { const r = svg.getBoundingClientRect(); return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H }; };
+    nodeEls.forEach((ne, i) => {
+      ne.addEventListener("mouseenter", () => !drag && focus(nodes[i]));
+      ne.addEventListener("mouseleave", () => !drag && focus(null));
+      ne.addEventListener("pointerdown", (e) => { drag = nodes[i]; drag.fixed = true; ne.setPointerCapture(e.pointerId); focus(drag); });
+      ne.addEventListener("pointermove", (e) => { if (drag !== nodes[i]) return; const p = pt(e); drag.x = p.x; drag.y = p.y; for (let k = 0; k < 3; k++) tick(0.15); draw(); });
+      ne.addEventListener("pointerup", () => { if (drag) drag.fixed = false; drag = null; focus(null); });
+    });
   }
 
   function peopleOverview(P) {

@@ -199,6 +199,49 @@ def people_passages(doc: dict) -> list[dict]:
                         f"{s['title']} -> {s['label']}: {s['status']}"
                         + (f", {s.get('rows', 0)} rows, {s.get('excluded', 0)} excluded" if s["status"] == "read" else f" ({s.get('error')})")
                         for s in doc["sources"]) + "."})
+    out += gold_passages(doc.get("gold"))
+    return out
+
+
+def _fmt_dist(d: dict | None) -> str:
+    vals = (d or {}).get("values", [])
+    return ", ".join(f"{v['value']} {'fewer than 5' if v['count'] is None else v['count']}" for v in vals) or "not enough answers"
+
+
+def gold_passages(g: dict | None) -> list[dict]:
+    """One passage per role (everywhere) and per region (everyone), from the people gold aggregates."""
+    if not g:
+        return []
+    out = []
+    names = {"ALL": "everyone", "MASTER_MENTEE": "master mentees", "MASTER_MENTOR": "master mentors", "PHD_MENTEE": "PhD mentees",
+             "PHD_MENTOR": "PhD mentors", "EVENT_PARTICIPANT": "event participants", "EVENT_SPEAKER": "event speakers",
+             "EVENT_COMMITTEE": "event committee", "MANAGEMENT_MEMBER": "management members", "MANAGEMENT_CANDIDATE": "management applicants"}
+    keys = [f"{r}|ALL" for r in g["roles"]] + [f"ALL|{reg}" for reg in g["regions"] if reg != "ALL"]
+    for key in keys:
+        role, region = key.split("|")
+        sl = g["slices"].get(key) or {}
+        who = names.get(role, role) + ("" if region == "ALL" else f" living in {region}")
+        if sl.get("people") is None or "province" not in sl:
+            out.append({"kind": "people", "title": f"People gold: {who}", "link": "#/people/gold", "source": None,
+                        "text": f"Fewer than 5 {who}: no breakdown is published."})
+            continue
+        out.append({"kind": "people", "title": f"People gold: {who}", "link": f"#/people/gold?role={role}&region={region}", "source": None,
+                    "text": f"{sl['people']} {who}. Province where they live: {_fmt_dist(sl['province'])}. City: {_fmt_dist(sl['city'])}. "
+                            f"Province of birth: {_fmt_dist(sl['birth_province'])}. Country of their master's or PhD: {_fmt_dist(sl['study_country'])}. "
+                            f"Country they want to study in: {_fmt_dist(sl['target_country'])}. Institution: {_fmt_dist(sl['institution'])}. "
+                            f"Events attended per person: {_fmt_dist({'values': sl['events_hist']})}. "
+                            f"{'fewer than 5' if sl['mentors_with_mentees'] is None else sl['mentors_with_mentees']} of them mentored someone in the pairing sheets; "
+                            f"mentees per mentor: {_fmt_dist({'values': sl['mentees_hist']})}."})
+    if g.get("events"):
+        out.append({"kind": "people", "title": "People gold: events with the most people", "link": "#/people/gold", "source": None,
+                    "text": "; ".join(f"{e['event']} ({e['year']}): {'fewer than 5' if e['participants'] is None else e['participants']} participants, "
+                                      f"{'fewer than 5' if e['speakers'] is None else e['speakers']} speakers" for e in g["events"]) + "."})
+    m = g.get("mentorship") or {}
+    if m:
+        out.append({"kind": "people", "title": "People gold: mentor-mentee pairs", "link": "#/people/gold", "source": None,
+                    "text": f"{m.get('links', 0)} mentor-mentee pairs are linked: " + "; ".join(
+                        f"{b['program']} {b['year']}: {'fewer than 5' if b['pairs'] is None else b['pairs']} pairs" for b in m.get("by_program", []))
+                        + ". Pairs are matched by email, else a unique phone, else a unique exact name; others are left out."})
     return out
 
 

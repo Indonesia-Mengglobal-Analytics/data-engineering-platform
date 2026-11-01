@@ -20,6 +20,23 @@ people:
     linkedin: [linkedin, linked_in]
     birthday: [birthday, date of birth, date_of_birth]
 
+  # Profile fields for the people gold table (pipeline/people_gold.py). The newest non-empty answer of a
+  # person wins. Places are matched to city / province / island region / country with config/places.yml.
+  attributes:
+    residence_city: [current_residence, "your current residency (city/ regency)", your_current_residency_city_regency, current residence]
+    residence_province: ["your current residency (region)", your_current_residency_province]
+    residence_country: [country_of_residency]
+    birth_place: [place_of_birth, place of birth]
+    bachelor_institution: [bachelor_institution, "bachelor's degree - name of institution", bachelors_degree_name_of_institution]
+    master_institution: [master_institution, "master's degree - name of institution", masters_degree_name_of_institution]
+    master_country: [master_country, "master's degree - country", masters_degree_country]
+    doctoral_institution: [doctoral_institution, doctoral_degree_name_of_institution]
+    doctoral_country: [doctoral_coutry, doctoral_country, doctoral_degree_country]
+    target_country: [application_1_country, target country, preferred_country_of_study]
+    target_university: [application_1_university, target university/ institution, preferred_university_or_institution_1]
+    area_of_study: [doctoral_degree_areas_of_study, phd_area_of_study, master_area_of_study, "master's degree - area of study", area_of_study, bachelor_area_of_study]
+    occupation_institution: ["current occupation - institution", current_occupation_institution, work_experience_name_of_institution]
+
   sources:
     # ---------------- Master mentorship (the regular IM Mentorship) ----------------
     - key: all_time_mentee
@@ -85,6 +102,8 @@ people:
       label: PHD_MENTEE
       status: SELECTED
       year: 2024
+      # Bootcamp lists: university and country are where the participant wants to do the PhD.
+      attributes: {target_university: [university], target_country: [country]}
     - key: phd_bootcamp_coach
       title: "phd bootcamp · final_coach"
       spreadsheet_id: 1jvWpB1M7uE18wRh0szgqimQptLI1AMqv2f66D_zR4zw
@@ -92,6 +111,8 @@ people:
       label: PHD_MENTOR
       status: SELECTED
       year: 2024
+      # Coaches: university and country of their PhD.
+      attributes: {doctoral_institution: [university], doctoral_country: [country]}
     - key: phd_mentee_2026
       title: "Mentee_Data_PhD_Mentorship_2026"
       spreadsheet_id: 1LpvKvoXsVdYsUqtYHXK1GEubUw9uykE1RTIs2bHJaLI
@@ -155,6 +176,32 @@ people:
       tab: Sheet1
       label: MANAGEMENT_MEMBER
       status: SELECTED
+
+  # Mentor-mentee pairs (people gold: mentees_mentored, mentors_had, and MENTORED edges in the graph).
+  # Each side is matched to a person by email, else a phone found once, else an exact name held by
+  # exactly one person with that role; the link records which (column "match").
+  pairings:
+    - key: phd_bootcamp_pairs
+      title: "phd bootcamp · final result"
+      spreadsheet_id: 1jvWpB1M7uE18wRh0szgqimQptLI1AMqv2f66D_zR4zw
+      tab: final result
+      program: PHD
+      year: 2024
+      group_column: group_name
+      mentor_columns: {email: [mentor_email], name: [mentor_name]}
+      mentee_columns: {email: [mentee_email], name: [mentee_name]}
+    - key: master_pairing
+      title: "mentee mentor pairing · final_pairing"
+      spreadsheet_id: 1Z-lly28ZecwG3Qbs5oz5YRSyx-jfIUZQbzchmjd-UEg
+      tab: final_pairing
+      program: MASTER
+      year: 2024   # sheet created July 2024; confirm the batch with the mentorship team
+      # Pairs hold ids only; the raw tabs give each id's name (and the mentor's phone).
+      mentor_columns: {id: [mentor_id]}
+      mentee_columns: {id: [mentee_id]}
+      lookups:
+        mentor: {tab: raw mentor, id: id, name: Full Name, phone: Phone number (WhatsApp)}
+        mentee: {tab: raw mentee, id: id, name: Full Name}
 
   # Known but not used, and why (shown on the People page).
   not_used:

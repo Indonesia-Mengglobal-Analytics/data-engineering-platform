@@ -512,7 +512,10 @@
     "Full Name",
     "Place of Birth",
     "Date of Birth",
-    "WhatsApp Phone Number"
+    "WhatsApp Phone Number",
+    "Your Current Residency (Region)",
+    "Your Current Residency (City/ Regency)",
+    "Target Country"
    ],
    [
     "2024",
@@ -521,7 +524,10 @@
     "Vino Pratama",
     "Bandung",
     "1/1/1995",
-    "+6281210000740"
+    "+6281210000740",
+    "Sulawesi Selatan",
+    "",
+    "Netherlands"
    ],
    [
     "2024",
@@ -530,7 +536,10 @@
     "Wulan Santoso",
     "Bandung",
     "1/1/1995",
-    "+6281210000777"
+    "+6281210000777",
+    "Jawa Timur",
+    "Malang",
+    "Netherlands"
    ],
    [
     "2024",
@@ -539,7 +548,10 @@
     "Yoga Nugroho",
     "Bandung",
     "1/1/1995",
-    "+6281210000814"
+    "+6281210000814",
+    "Sulawesi Selatan",
+    "",
+    "Netherlands"
    ],
    [
     "2024",
@@ -548,7 +560,10 @@
     "Zahra Wijaya",
     "Bandung",
     "1/1/1995",
-    "+6281210000851"
+    "+6281210000851",
+    "Jawa Timur",
+    "Malang",
+    "Netherlands"
    ],
    [
     "2024",
@@ -557,7 +572,10 @@
     "Ayu Rahman",
     "Bandung",
     "1/1/1995",
-    "+6281210000888"
+    "+6281210000888",
+    "Sulawesi Selatan",
+    "",
+    "Netherlands"
    ],
    [
     "2024",
@@ -566,7 +584,10 @@
     "Budi Hidayat",
     "Bandung",
     "1/1/1995",
-    "+6281210000925"
+    "+6281210000925",
+    "Jawa Timur",
+    "Malang",
+    "Netherlands"
    ],
    [
     "2024",
@@ -575,7 +596,10 @@
     "Citra Saputra",
     "Bandung",
     "1/1/1995",
-    "+6281210000962"
+    "+6281210000962",
+    "Sulawesi Selatan",
+    "",
+    "Netherlands"
    ],
    [
     "2024",
@@ -584,7 +608,10 @@
     "Dimas Permata",
     "Bandung",
     "1/1/1995",
-    "+6281210000999"
+    "+6281210000999",
+    "Jawa Timur",
+    "Malang",
+    "Netherlands"
    ],
    [
     "2024",
@@ -593,7 +620,10 @@
     "Eka Kusuma",
     "Bandung",
     "1/1/1995",
-    "+6281210001036"
+    "+6281210001036",
+    "Sulawesi Selatan",
+    "",
+    "Netherlands"
    ],
    [
     "2024",
@@ -602,7 +632,10 @@
     "Fajar Lestari",
     "Bandung",
     "1/1/1995",
-    "+6281210001073"
+    "+6281210001073",
+    "Jawa Timur",
+    "Malang",
+    "Netherlands"
    ],
    [
     "2024",
@@ -611,7 +644,10 @@
     "Gita Pratama",
     "Bandung",
     "1/1/1995",
-    "+6281210001110"
+    "+6281210001110",
+    "Sulawesi Selatan",
+    "",
+    "Netherlands"
    ],
    [
     "2024",
@@ -620,7 +656,10 @@
     "Hadi Santoso",
     "Bandung",
     "1/1/1995",
-    "+6281210001147"
+    "+6281210001147",
+    "Jawa Timur",
+    "Malang",
+    "Netherlands"
    ]
   ],
   "mentee_registration_form": [

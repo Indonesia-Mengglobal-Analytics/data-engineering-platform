@@ -1,0 +1,327 @@
+{
+ "spreadsheet_id": "1Z-lly28ZecwG3Qbs5oz5YRSyx-jfIUZQbzchmjd-UEg",
+ "title": "mentee mentor pairing",
+ "tabs": {
+  "final_pairing": [
+   [
+    "Matching Score",
+    "mentor_id",
+    "mentor_faculty",
+    "mentee_id",
+    "mentee_faculty"
+   ],
+   [
+    "0.9",
+    "MR-0",
+    "",
+    "ME-0",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-1",
+    "",
+    "ME-1",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-2",
+    "",
+    "ME-2",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-3",
+    "",
+    "ME-3",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-4",
+    "",
+    "ME-4",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-5",
+    "",
+    "ME-5",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-0",
+    "",
+    "ME-6",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-1",
+    "",
+    "ME-7",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-2",
+    "",
+    "ME-8",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-3",
+    "",
+    "ME-9",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-4",
+    "",
+    "ME-10",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-5",
+    "",
+    "ME-11",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-0",
+    "",
+    "ME-12",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-1",
+    "",
+    "ME-13",
+    ""
+   ],
+   [
+    "0.9",
+    "MR-2",
+    "",
+    "ME-14",
+    ""
+   ],
+   [
+    "0.5",
+    "MR-0",
+    "",
+    "ME-90",
+    ""
+   ],
+   [
+    "0.5",
+    "MR-1",
+    "",
+    "ME-91",
+    ""
+   ]
+  ],
+  "raw mentor": [
+   [
+    "Timestamp",
+    "id",
+    "selected_mentor",
+    "Are you past IM Mentor?",
+    "Full Name",
+    "Linkedin URL",
+    "Phone number (WhatsApp)"
+   ],
+   [
+    "",
+    "MR-0",
+    "TRUE",
+    "No",
+    "Maya Pratama",
+    "",
+    "+6281210002220"
+   ],
+   [
+    "",
+    "MR-1",
+    "TRUE",
+    "No",
+    "Nanda Santoso",
+    "",
+    "+6281210002257"
+   ],
+   [
+    "",
+    "MR-2",
+    "TRUE",
+    "No",
+    "Oka Nugroho",
+    "",
+    "+6281210002294"
+   ],
+   [
+    "",
+    "MR-3",
+    "TRUE",
+    "No",
+    "Putri Wijaya",
+    "",
+    "+6281210002331"
+   ],
+   [
+    "",
+    "MR-4",
+    "TRUE",
+    "No",
+    "Raka Rahman",
+    "",
+    "+6281210002368"
+   ],
+   [
+    "",
+    "MR-5",
+    "TRUE",
+    "No",
+    "Sari Hidayat",
+    "",
+    ""
+   ]
+  ],
+  "raw mentee": [
+   [
+    "Full Name",
+    "id",
+    "selected_for_pairing",
+    "area_of_study",
+    "region"
+   ],
+   [
+    "Ayu Pratama",
+    "ME-0",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Budi Santoso",
+    "ME-1",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Citra Nugroho",
+    "ME-2",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Dimas Wijaya",
+    "ME-3",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Eka Rahman",
+    "ME-4",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Fajar Hidayat",
+    "ME-5",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Gita Saputra",
+    "ME-6",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Hadi Permata",
+    "ME-7",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Intan Kusuma",
+    "ME-8",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Joko Lestari",
+    "ME-9",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Kirana Pratama",
+    "ME-10",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Lukman Santoso",
+    "ME-11",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Maya Nugroho",
+    "ME-12",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Nanda Wijaya",
+    "ME-13",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Oka Rahman",
+    "ME-14",
+    "TRUE",
+    "Engineering",
+    "Europe"
+   ],
+   [
+    "Dewi Lestari",
+    "ME-90",
+    "TRUE",
+    "",
+    ""
+   ],
+   [
+    "Nobody Known",
+    "ME-91",
+    "TRUE",
+    "",
+    ""
+   ]
+  ]
+ }
+}
