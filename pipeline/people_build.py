@@ -41,27 +41,35 @@ MAX_RUNS = 50
 
 
 def read_google(google: GoogleSource, sources: list[dict]) -> dict:
+    """Every configured tab. A tab that still fails after retries is recorded as unreachable, with the
+    reason, and the run goes on with the others (the run then shows as partial)."""
     from googleapiclient.errors import HttpError
+
+    def get(spreadsheet_id: str, rng: str) -> list:
+        # num_retries retries timeouts, connection errors, 429 and 5xx with exponential backoff.
+        return google.sheets.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id, range=rng, valueRenderOption="FORMATTED_VALUE").execute(num_retries=RETRIES).get("values", [])
 
     tabs: dict = {}
     cache: dict = {}
     for s in sources:
         try:
-            rng = f"'{s['tab']}'"
-            values = google.sheets.spreadsheets().values().get(
-                spreadsheetId=s["spreadsheet_id"], range=rng, valueRenderOption="FORMATTED_VALUE").execute().get("values", [])
+            values = get(s["spreadsheet_id"], f"'{s['tab']}'")
             if s.get("header_from_column_metadata"):
                 key = s["spreadsheet_id"]
                 if key not in cache:
-                    meta = google.sheets.spreadsheets().values().get(
-                        spreadsheetId=key, range="'COLUMN_METADATA'").execute().get("values", [])
-                    cache[key] = meta
+                    cache[key] = get(key, "'COLUMN_METADATA'")
                 values = rename_from_metadata(values, cache[key])
             tabs[s["key"]] = values
         except HttpError as error:
             status = error.resp.status
             tabs[s["key"]] = Exception(f"no access: share with {google.account}" if status in (403, 404) else f"HTTP {status}")
+        except (TimeoutError, OSError) as error:
+            tabs[s["key"]] = Exception(f"Google did not answer after {RETRIES + 1} tries ({type(error).__name__}); retried next run")
     return tabs
+
+
+RETRIES = 4
 
 
 def rename_from_metadata(values: list[list], meta: list[list]) -> list[list]:

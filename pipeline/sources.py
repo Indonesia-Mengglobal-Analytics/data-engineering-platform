@@ -29,14 +29,22 @@ def from_fixtures(folder: Path) -> list[SheetSnapshot | SourceError]:
     return sheets
 
 
+HTTP_TIMEOUT_S = 180
+
+
 class GoogleSource:
     def __init__(self, service_account_info: dict):
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
 
+        import google_auth_httplib2
+        import httplib2
+
         creds = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-        self.drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-        self.sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        # Large sheets (tens of thousands of rows) can take longer than httplib2's default 60 s.
+        http = lambda: google_auth_httplib2.AuthorizedHttp(creds, http=httplib2.Http(timeout=HTTP_TIMEOUT_S))  # noqa: E731
+        self.drive = build("drive", "v3", http=http(), cache_discovery=False)
+        self.sheets = build("sheets", "v4", http=http(), cache_discovery=False)
         self.account = service_account_info.get("client_email", "")
 
     def discover(self, folder_ids: list[str], spreadsheet_ids: list[str]) -> list[str]:
